@@ -1,0 +1,57 @@
+# ===== 真实数据：绝对不要提交到 GitHub =====
+# 学生主表、谈话记录、成绩、照片都含个人信息，只留在本机（或加密备份）
+data/
+data_test/
+photos/
+photos_src/
+照片/
+备份/
+导出_脱敏版/
+dashboard.html
+dashboard_脱敏外发版.html
+photo_index.json
+*.db
+*.sqlite
+*.sqlite3
+工作台数据汇总.xlsx
+*成绩源文件*
+*培养方案*.xlsx
+*全校成绩*
+
+# ===== 内部工作文档：含真实手机号 / 学号核对记录，只留本地 =====
+0*_*.md
+
+# ===== 本机临时/中间产物 =====
+_临时解析副本/
+_扫描临时/
+_shot*
+_check.js
+_t.html
+_t2.html
+_dom.html
+_ana*.json
+_old.json
+_prev.json
+
+# ===== 打包与依赖 =====
+dist/
+build/
+*.spec
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+
+# ===== 可执行文件（走 GitHub Releases 分发，不进仓库）=====
+*.exe
+*.msi
+*.zip
+
+# ===== 系统/编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.log
