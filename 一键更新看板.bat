@@ -3,8 +3,14 @@ chcp 65001 >nul
 cd /d %~dp0
 title 辅导员工作台 - 更新看板
 
-set "PY=C:\Users\user\.workbuddy\binaries\python\versions\3.13.12\python.exe"
-if not exist "%PY%" set "PY=py"
+rem 依次尝试 py 启动器 / PATH 里的 python（不写死本机路径，换机器也能用）
+set "PY="
+where py >nul 2>nul
+if not errorlevel 1 set "PY=py"
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PY=python"
+)
 
 "%PY%" -c "import sys" >nul 2>nul
 if errorlevel 1 (
@@ -18,5 +24,4 @@ echo 正在用 data 目录下的 CSV 重建看板并同步数据库...
 "%PY%" build.py
 echo.
 echo 完成：dashboard.html / 脱敏版 / 汇总xlsx / 辅导员工作台.db 已更新
-echo 按任意键关闭。
-pause >nul
+pause

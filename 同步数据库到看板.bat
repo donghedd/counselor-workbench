@@ -3,8 +3,14 @@ chcp 65001 >nul
 cd /d %~dp0
 title 辅导员工作台 - 同步数据库到看板
 
-set "PY=C:\Users\user\.workbuddy\binaries\python\versions\3.13.12\python.exe"
-if not exist "%PY%" set "PY=py"
+rem 依次尝试 py 启动器 / PATH 里的 python（不写死本机路径，换机器也能用）
+set "PY="
+where py >nul 2>nul
+if not errorlevel 1 set "PY=py"
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PY=python"
+)
 
 "%PY%" -c "import sys" >nul 2>nul
 if errorlevel 1 (
@@ -18,5 +24,4 @@ echo 正在把 辅导员工作台.db 的内容导出为 CSV 并重建看板...
 "%PY%" build.py
 echo.
 echo 完成：数据库改动已同步到看板
-echo 按任意键关闭。
-pause >nul
+pause

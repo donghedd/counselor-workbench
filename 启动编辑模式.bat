@@ -3,8 +3,14 @@ chcp 65001 >nul
 cd /d %~dp0
 title 辅导员工作台 - 编辑模式（关闭本窗口即停止服务）
 
-set "PY=C:\Users\user\.workbuddy\binaries\python\versions\3.13.12\python.exe"
-if not exist "%PY%" set "PY=py"
+rem 依次尝试 py 启动器 / PATH 里的 python（不写死本机路径，换机器也能用）
+set "PY="
+where py >nul 2>nul
+if not errorlevel 1 set "PY=py"
+if not defined PY (
+  where python >nul 2>nul
+  if not errorlevel 1 set "PY=python"
+)
 
 "%PY%" -c "import sys" >nul 2>nul
 if errorlevel 1 (
@@ -28,5 +34,4 @@ echo.
 "%PY%" server.py
 
 echo.
-echo 服务已停止。按任意键关闭本窗口。
-pause >nul
+pause
