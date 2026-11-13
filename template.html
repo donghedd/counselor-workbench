@@ -1928,7 +1928,7 @@ function renderWaizhu(){
     '<span class="small">审批状态</span>'+
     [["","全部"],["已通过","已通过"],["待审批","待审批"],["未通过","未通过"]].map(([v,l])=>
       '<button class="seg'+(wzF===v?" active":"")+'" onclick="setWzF(\''+v+'\')">'+l+' <span style="opacity:.7">'+(v?cntOf(v):all.length)+'</span></button>').join("")+
-    '<span class="small" style="margin-left:6px">共 '+rows.length+' 人 ｜ 点任意一行查看该生完整详情'+(EDIT?'，详情卡里点「编辑此学生」可直接修改':'')+'</span></div>';
+    '<span class="small" style="margin-left:6px">共 '+rows.length+' 人</span></div>';
   if(!rows.length){$("#grad-waizhu").innerHTML=seg+'<div class="empty">该筛选下没有记录</div>';return}
   $("#grad-waizhu").innerHTML=seg+
     '<table class="tbl-fixed"><colgroup>'+WZ_COLS.map(w=>'<col style="width:'+w+'%">').join("")+'</colgroup>'+
