@@ -1736,7 +1736,7 @@ function acImportModal(kind){
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(isPlan?"导入培养方案":"导入全校成绩")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">'+(isPlan?
       '上传「2023级xx主修培养方案--方案内表现课程信息.xlsx」类型的文件（文件名需含“xx主修培养方案”），系统自动识别专业、解析类别学分要求与方案内课程，同名专业自动覆盖更新，人工调整过的学分要求会保留。':
-      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格）、应修未修（同届已修该生未修）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期视为在修，不计入挂科与学分。')+'</div>'+
+      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格）、应修未修（按培养方案课组：学分没修满的课组，列出还需补修的课程）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期视为在修，不计入挂科与学分。')+'</div>'+
     '<div class="drop" id="ac-drop"><div class="dz-t">把 xlsx 文件拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'ac-file\')">选择文件…</button>'+
       '<div class="dz-s">仅支持 .xlsx</div></div>'+

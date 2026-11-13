@@ -2,15 +2,16 @@
 """学业模块：培养方案解析 + 全校成绩导入分析。
 
 数据文件（均在 data/ 下）：
-- 12_培养方案.json   各专业培养方案（类别树 + 要求学分 + 方案内课程清单）
+- 12_培养方案.json   各专业培养方案（类别树 + 要求学分 + 方案内课程清单 + 课程→课组归属 cgroups）
 - 13_成绩分析.json   最近一次全校成绩导入的逐生分析（挂科/应修未修/学科交叉/学分/警示）
 - 14_学业警示.csv    人工登记的学业警示（自动分析不落这张表，前端合并展示）
 
 培养方案 xlsx 是教务系统导出的特殊版式（合并单元格交错），无法按普通表格读。
 本模块直接解析 xlsx 的 sharedStrings 与单元格流：
 - 类别树来自「类别#g（要求学分：X 已修学分：Y）g#/子类」编码串与面包屑碎片；
-- 方案内课程集合来自「课程名[课程号]」形 token。
-两者都只取"要求学分"与"课程号集合"，不依赖排版顺序，鲁棒。
+- 方案内课程集合来自「课程名[课程号]」形 token；
+- 课程→课组归属（cgroups）来自编码串分块的先后顺序：编码串之后紧随的课程
+  就属于该课组；同一行「编码串+课程名」是学校认定的可替代关系，一并收录。
 
 成绩分析口径（大四上=当前学期进行中）：
 - 挂科：已完成学期中 成绩<60 / 文本"不及格" / 是否及格=否且学分>0（六级等 >=300 大分不算）；
@@ -18,8 +19,10 @@
   视同该课已修读——计入 taken（不再误报未选课）、学分归口到方案内课号；
   同一门课（含替代课号）任一次学期通过即视为已获学分，之后重修再挂不算未获学分；
 - 已修学分：已完成/在修学期中通过课程学分之和（同课程号取最大学分一次）；
-- 应修未修：方案内课程按同专业同届修读学期众数推断计划学期，落在已完成学期、
-  该生从未选过、所在类别学分有缺口、且 >=30% 同专业人选过的课程；
+- 应修未修：按培养方案课组口径 —— 先把成绩行按 cgroups 归口到具体课组，
+  课组学分没修满的才需要再修；组内没修的课按计划学期顺序列出，
+  学分凑够缺口即止（组里已经修够的，剩下的课不属于"必须修"，不再点名）；
+  计划学期仍按同专业同届修读学期众数推断（只用于判断这学期是否该修）；
   文化素质类（通识限选>文化素质类-计科）与学科交叉课组属"自由选课凑学分"课组，
   只记学分缺口、不点名具体课程（不必修某一门，达标即可）；
 - 学科交叉：培养方案外的课程（课号不在本专业方案、课名也对不上方案课程），
@@ -118,6 +121,56 @@ def _read_strings_and_cells(data):
 
 
 # ---------------------------------------------------------------- 培养方案解析
+def _plan_cgroups(data):
+    """课程 -> 课组路径（如 "专业限选 > 智能科学基础"，一门课可能挂在多个课组）。
+
+    教务导出的「方案内表现课程信息」按课组分块连续排版：编码串（课组表头）之后
+    紧跟的就是该课组的课程，共享字符串按首次使用顺序排列，因此「上一个课组
+    编码串」到「下一个课组编码串」之间的课程名都属于前一个课组 —— 被删除行
+    残留在共享字符串里的课程（表格正文没有的课）也会按原位归组，恰好补齐被
+    隐藏的课程行。另外「同一行里 编码串+课程名」是学校认定的可替代关系，一并收录。
+    """
+    z = zipfile.ZipFile(io.BytesIO(data))
+    ss = re.findall(r"<t[^>]*>([^<]*)</t>", z.read("xl/sharedStrings.xml").decode("utf-8"))
+    root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+    cg = {}
+
+    def add(code, key):
+        if code and key:
+            lst = cg.setdefault(code, [])
+            if key not in lst:
+                lst.append(key)
+
+    cur = None
+    for s in ss:                                   # ① 顺序游标：编码串之间的课属于该课组
+        if "要求学分" in s:
+            seg = parse_path(s)
+            if seg:
+                cur = " > ".join(n for n, _ in seg)
+                continue
+        m = RE_COURSE.match(s.strip())
+        if m:
+            add(m.group(1), cur)
+    for row in root.iter(M + "row"):               # ② 同行「编码串+课程名」= 认定的替代关系
+        codes, enc = [], None
+        for c in row:
+            v = c.find(M + "v")
+            if v is None:
+                continue
+            s = ss[int(v.text)] if c.get("t") == "s" else v.text
+            m = RE_COURSE.match(s.strip())
+            if m:
+                codes.append(m.group(1))
+            elif enc is None and "要求学分" in s:
+                seg = parse_path(s)
+                if seg:
+                    enc = " > ".join(n for n, _ in seg)
+        if enc:
+            for code in codes:
+                add(code, enc)
+    return cg
+
+
 def parse_plan(fname, data):
     strings, cells = _read_strings_and_cells(data)
     tree = {}          # path tuple -> req
@@ -191,7 +244,7 @@ def parse_plan(fname, data):
     if not major:
         raise ValueError("无法从文件名识别专业（文件名需含“xxx主修培养方案”）")
     return {"major": major, "year": year, "cats": cats, "codes": codes,
-            "source": os.path.basename(fname)}
+            "cgroups": _plan_cgroups(data), "source": os.path.basename(fname)}
 
 
 def load_plans():
@@ -595,8 +648,14 @@ def analyze_grades(fname, data):
         pass_rep = {}   # 归口课号 -> 最近通过学期（成绩替代/认定：课号与课名都可能变）
         pass_code = {}  # 课号（含替代课号）-> 最近通过学期，用于识别"换新号重修通过"
         failed, current_rows = [], []
-        plan_codes = (plans.get(major) or {}).get("codes") or {}
+        plan = plans.get(major) or {}
+        plan_codes = plan.get("codes") or {}
         plan_names = {_norm_name(v) for v in plan_codes.values()}
+        cg = plan.get("cgroups") or {}
+
+        def _refine(r):
+            return _refine_cat(_cat_of_row(r, plan_codes, plan_names), r, cg)
+
         hit_best = {}   # 归口课号 -> (学分, 成绩行)：类别学分按归口课号累计，同一门课只算一次
         for r in my:
             cs = _row_codes(r)
@@ -628,7 +687,7 @@ def analyze_grades(fname, data):
                 continue
             taken.update(cs)
             if isFail:
-                cat = _cat_of_row(r, plan_codes, plan_names)
+                cat = _refine(r)
                 if _is_flex_cat(cat):
                     continue  # 文化素质/外语/学科交叉：课组内补足即可，不计入挂科、不列明细
                 item = {"t": term_label(tk), "n": nm, "s": sc, "c": credit, "code": code,
@@ -673,7 +732,7 @@ def analyze_grades(fname, data):
         extra = []
         en_credits = 0.0   # 英语学分合池（按归口课号去重，防替代课号重复计分）
         for rep, (credit, r) in hit_best.items():
-            cat = _cat_of_row(r, plan_codes, plan_names)
+            cat = _refine(r)
             if cat[0] == "学科交叉课组":
                 extra.append({"n": (r.get("课程名") or "").strip(), "c": credit, "t": term_label(tk_of(r))})
                 catEarned["学科交叉课组"] += credit
@@ -683,12 +742,15 @@ def analyze_grades(fname, data):
             for i in range(1, len(cat) + 1):
                 catEarned[" > ".join(cat[:i])] += credit
         # 方案缺口（叶子层）
-        plan = plans.get(major) or {}
         reqs = {c["key"]: c["req"] for c in plan.get("cats", [])}
         en_credits = round(en_credits, 1)
+        cg_leaf = set()
+        for _ps in cg.values():
+            cg_leaf.update(_ps)
         short_all = []
         for key, req in sorted(reqs.items()):
-            if not _checkable(key):
+            # 课组归属已从培养方案解析出来的子课组（专业限选/专业必修的模块）也能按学分判定
+            if not _checkable(key) and key not in cg_leaf:
                 continue
             got = round(catEarned.get(key, 0.0), 1)
             if key.split(" > ")[-1] in EN_GROUPS:
@@ -706,33 +768,45 @@ def analyze_grades(fname, data):
         if 1 <= _sy <= 6:
             yv_manual = _sy
             yv = _sy
-        # 应修未修
+        # 应修未修：按培养方案课组口径 —— 课组学分没修满的，才需要再修；
+        # 组内没修的课按学期顺序列出来，学分凑够缺口即止（组里修够了的，
+        # 剩下的课不属于"必须修"，不再点名）。是否开课不看同届修了多少人。
         missing = []
         if plan.get("codes") and last_completed:
             shortfall_keys = {s["k"] for s in short}
-            cand = {}
             # 该生已修过但挂科的课（含其替代课号）：挂科明细里会列，这里不重复点名"未选课"
             failed_codes = {f["code"] for f in failed} | {alias.get(f["code"]) for f in failed}
+            bygrp = {}
             for code, nm in plan["codes"].items():
                 if code in taken or code in failed_codes:
-                    continue
-                mt = plan_term(code)
-                if mt is None or mt > last_completed:
                     continue
                 rr = rep_row.get((major, code))
                 if rr is None:
                     continue
-                cat = _cat_of_row(rr)
+                cat = _refine(rr)
                 if _is_flex_cat(cat):
                     continue  # 文化素质/外语/学科交叉属自由选课凑学分，不点名具体课程
                 key = " > ".join(cat)
                 if not _short_hit(key, shortfall_keys):
                     continue
-                p = pop.get((major, code), 0)
-                if p < 0.3:
+                mt = plan_term(code)
+                if mt is None or mt > last_completed:
                     continue
-                cand[code] = {"n": nm, "cat": key, "pop": round(p * 100), "term": term_label(mt)}
-            missing = sorted(cand.values(), key=lambda x: (-x["pop"], x["cat"]))[:40]
+                cr = plan_credit(code)
+                bygrp.setdefault(key, []).append(
+                    {"n": nm, "cat": key, "pop": round(pop.get((major, code), 0) * 100),
+                     "term": term_label(mt), "c": round(cr, 1) if cr else "",
+                     "_tk": mt, "_cr": cr})
+            for key, items in bygrp.items():
+                gap = next((round(s["req"] - s["got"], 1) for s in short if s["k"] == key), None)
+                acc = 0.0
+                for x in sorted(items, key=lambda x: (x["_tk"], -x["pop"])):
+                    missing.append({k2: v for k2, v in x.items() if not k2.startswith("_")})
+                    acc = round(acc + x["_cr"], 1)
+                    if x["_cr"] > 0 and gap is not None and acc >= gap - 0.05:
+                        break   # 课组只差 N 学分时，列出能凑够 N 学分的课就够了
+            missing.sort(key=lambda x: (-x["pop"], x["cat"]))
+            missing = missing[:40]
         # 未获学分科目（截止目前应获未获）
         # 只有文化素质/学科交叉/外语基础/外语拓展 四类以「课程组」形式展示缺口；
         # 其余类别一律展开成具体课程名（挂科未通过 / 该修未选），按缺口学分逐条消费。
@@ -757,8 +831,8 @@ def analyze_grades(fname, data):
                 if (m["cat"] == key or m["cat"].startswith(key + " > ")) \
                         and not any(x["n"] == m["n"] for x in cands):
                     cands.append({"n": m["n"], "cat": m["cat"], "status": "未选课",
-                                  "t": m.get("term") or "", "c": "", "_ord": 1,
-                                  "_tk": _term_key(m.get("term")) or (0, 0), "_cr": 0})
+                                  "t": m.get("term") or "", "c": m.get("c") or "", "_ord": 1,
+                                  "_tk": _term_key(m.get("term")) or (0, 0), "_cr": _f(m.get("c"))})
             cands.sort(key=lambda x: (x["_ord"], x["_tk"]))
             acc = 0.0
             for x in cands:
@@ -857,6 +931,7 @@ def analyze_grades(fname, data):
         if not codes:
             continue
         pn = {_norm_name(v) for v in codes.values()}
+        pcg = plan.get("cgroups") or {}
         py = int(plan.get("year") or 0) or 0
         d = {}
         for code, nm in codes.items():
@@ -865,7 +940,7 @@ def analyze_grades(fname, data):
             cat = ""
             if rr is not None:
                 on = any(c in codes for c in _row_codes(rr))
-                cat = " > ".join(_cat_of_row(rr, codes if on else None, pn))
+                cat = " > ".join(_refine_cat(_cat_of_row(rr, codes if on else None, pn), rr, pcg))
                 # 成绩表把「外语基础」与「外语拓展」都标成通识限选，展示时按课名拆开，
                 # 只用于培养方案页分组，不动学分口径（外语两个课组本来就按合池判定）
                 if cat == "通识限选 > 外语拓展课组I类" and re.match(r"^通用英语|^大学英语|^基础英语|^综合英语", nm):
@@ -934,6 +1009,27 @@ def _late_hint(key):
         if leaf == name:
             return re.compile(pat)
     return None
+
+
+def _refine_cat(cat, r, cg):
+    """用培养方案的课组归属，把「专业限选」这类顶层归口细化到具体课组。
+
+    课组只要求修满要求学分，不要求把组里每门课都修完；归口细到课组，
+    "组内已修够、剩下的课不算必须修"的判定才做得出来。
+    只在成绩行自身归口是课组路径的前缀时才细化（方向必须一致，防止把
+    体育课错挂到限选课组）；替代/认定行的替代课号同样参与匹配；
+    一门课挂多个课组时取最长匹配。
+    """
+    if not cg:
+        return cat
+    best = None
+    for c in _row_codes(r):
+        for g in cg.get(c) or []:
+            gp = g.split(" > ")
+            if len(gp) > len(cat) and gp[:len(cat)] == list(cat):
+                if best is None or len(gp) > len(best):
+                    best = gp
+    return best or cat
 
 
 def _parents(key):
