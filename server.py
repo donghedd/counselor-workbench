@@ -991,8 +991,13 @@ def update_check(force=False):
 
 def update_settings(obj):
     import updater
-    repo = updater.set_repo(obj.get("repo"), obj.get("token"))
-    return {"ok": True, "repo": repo}
+    repo = None
+    if (obj.get("repo") or "").strip():
+        repo = updater.set_repo(obj.get("repo"), obj.get("token"))
+    if "autoUpdate" in obj:
+        updater.set_auto(bool(obj.get("autoUpdate")))
+    return {"ok": True, "repo": repo or updater.get_repo(),
+            "autoUpdate": updater.auto_enabled()}
 
 
 def update_install(obj):
@@ -1000,7 +1005,8 @@ def update_install(obj):
     url = str(obj.get("url") or "").strip()
     if not url.startswith("https://"):
         raise ValueError("下载地址无效")
-    ok = updater.install_async(url, str(obj.get("name") or "setup.exe"))
+    ok = updater.install_async(url, str(obj.get("name") or "setup.exe"),
+                               str(obj.get("version") or ""))
     return {"ok": ok, "started": ok}
 
 
@@ -1047,6 +1053,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/update/progress":
             import updater
             self._json(updater.progress())
+            return
+        if path == "/api/update/config":
+            import updater
+            self._json(updater.config())
+            return
+        if path == "/api/update/auto":
+            # 启动页用它决定要不要自动更新；任何异常一律返回「不更新」
+            try:
+                import updater
+                self._json(updater.auto_check())
+            except Exception as e:
+                self._json({"ok": False, "hasUpdate": False, "error": str(e)[-200:]})
             return
         if path == "/api/update/check":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)

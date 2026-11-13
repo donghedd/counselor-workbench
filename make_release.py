@@ -29,7 +29,7 @@ FILES = [
     "launcher.py", "server.py", "build.py", "academic.py", "xlsx_io.py",
     "db_sync.py", "extract.py", "app_paths.py", "init_data.py", "verify.py",
     "version.py", "updater.py", "update.json",
-    "template.html", "app.ico",
+    "template.html", "app.ico", "boot.html",
     ("docs/使用说明.md", "使用说明.md"),
     ("docs/字段说明.md", "字段说明.md"),
     ("docs/数据库说明.md", "数据库说明.md"),

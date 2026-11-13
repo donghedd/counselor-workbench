@@ -116,6 +116,9 @@ Type: dirifempty; Name: "{app}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "立即启动 {#AppName}"; Flags: nowait postinstall skipifsilent; Check: NotSilentInstall
+; 应用内自动更新：更新器带 /RELAUNCH=1 静默启动安装包，装完把新版直接拉起来，
+; 用户不用再自己点桌面图标（否则“自动更新”装完就什么都不剩，体验很怪）。
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: ShouldRelaunch
 
 [Code]
 var
@@ -167,6 +170,12 @@ end;
 function NotSilentInstall(): Boolean;
 begin
   Result := not WizardSilent();
+end;
+
+{ 安装完要不要自动启动：只有更新器传了 /RELAUNCH=1 才启动 }
+function ShouldRelaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
 end;
 
 { 桌面快捷方式要不要建。

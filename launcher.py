@@ -258,6 +258,22 @@ def _run_browser(url):
 
 
 # ---------------------------------------------------------------- 入口
+def _start_url(port):
+    """启动页。
+
+    默认先打开 boot.html：它会顺手检查一次更新，发现新版本就下载、静默安装、
+    装完自动重启到新版；没有更新就立刻跳进首页，用户基本感觉不到中间这一步。
+    自动更新关掉（或没有 boot.html，比如老版本残留目录）时直接进看板。
+    """
+    try:
+        import updater
+        if updater.auto_enabled() and os.path.exists(os.path.join(APP_HOME, "boot.html")):
+            return "http://127.0.0.1:%d/boot.html" % port
+    except Exception:
+        _log("自动更新检查不可用，直接进入看板：\n" + traceback.format_exc())
+    return "http://127.0.0.1:%d/dashboard.html" % port
+
+
 def _activate_existing():
     """已有实例在跑时，把它的窗口提到前台，而不是再开一个。"""
     if os.name != "nt":
@@ -296,7 +312,7 @@ def main():
         return 1
 
     import server
-    url = "http://127.0.0.1:%d/dashboard.html" % server.PORT
+    url = _start_url(server.PORT)
     httpd = None
     try:
         httpd = server.start_server()

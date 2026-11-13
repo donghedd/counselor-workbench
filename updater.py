@@ -34,6 +34,12 @@ TIMEOUT = 8
 CACHE_SEC = 1800          # 手动之外自动检查的缓存时间
 _cache = {"at": 0.0, "data": None}
 
+# 自动更新的记忆文件：记录「上次自动装的是哪个版本」。
+# 万一某个版本装不上（下载被墙、安装包坏了），同版本 6 小时内不再自动重试，
+# 免得每次打开软件都先卡一会儿再失败；手动点「检查更新」不受限制。
+STATE = os.path.join(DATA, "update_state.json")
+RETRY_GAP = 6 * 3600
+
 # 下载任务状态（/api/update/progress 轮询）
 JOB = {"state": "idle", "pct": 0, "msg": "", "size": 0, "done": 0, "err": ""}
 _job_lock = threading.Lock()
@@ -71,6 +77,23 @@ def get_token():
         if t:
             return t
     return (os.environ.get("WORKBENCH_TOKEN") or "").strip()
+
+
+def auto_enabled():
+    """启动时是否自动更新。设置里没写过就当作开启。"""
+    v = _load_json(SETTINGS).get("autoUpdate", None)
+    return True if v is None else bool(v)
+
+
+def set_auto(flag):
+    cfg = _load_json(SETTINGS)
+    cfg["autoUpdate"] = bool(flag)
+    _save_settings(cfg)
+    return cfg["autoUpdate"]
+
+
+def config():
+    return {"repo": get_repo(), "autoUpdate": auto_enabled(), "current": version.VERSION}
 
 
 def set_repo(repo, token=None):
@@ -166,6 +189,36 @@ def check(force=False):
     return out
 
 
+def auto_check():
+    """开机自动更新用：要不要更新、装哪个包。
+
+    和手动 check 的区别：这里多加了几道「别打扰用户」的判断——
+    开关关掉、上次装这个版本失败过（6 小时内）、没有安装版资产，都直接放行。
+    任何异常都当成「不更新」，绝不能因为更新把程序卡在启动界面。
+    """
+    if (os.environ.get("WORKBENCH_NO_AUTOUPDATE") or "").strip() == "1":
+        return {"ok": True, "hasUpdate": False, "skipped": "env", "current": version.VERSION}
+    if not auto_enabled():
+        return {"ok": True, "hasUpdate": False, "skipped": "disabled", "current": version.VERSION}
+    r = check(False)
+    if not r.get("ok") or not r.get("hasUpdate"):
+        out = dict(r)
+        out["hasUpdate"] = False
+        return out
+    latest = str(r.get("latest") or "")
+    asset = r.get("asset") or {}
+    if not str(asset.get("name") or "").lower().endswith(".exe"):
+        return dict(r, hasUpdate=False, skipped="no_installer")
+    st = _load_json(STATE)
+    try:
+        tried, at = str(st.get("tried") or ""), float(st.get("at") or 0)
+    except Exception:
+        tried, at = "", 0.0
+    if tried == latest and time.time() - at < RETRY_GAP:
+        return dict(r, hasUpdate=False, skipped="recent_failed")
+    return r
+
+
 # ------------------------------------------------------------------ 下载与安装
 def _download(url, dest, token=""):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -186,7 +239,7 @@ def _download(url, dest, token=""):
     return got
 
 
-def install_async(url, name="setup.exe"):
+def install_async(url, name="setup.exe", ver=""):
     """后台下载 → 启动安装程序 → 退出本程序。返回是否成功启动任务。"""
     with _job_lock:
         if JOB["state"] == "downloading":
@@ -213,10 +266,19 @@ def install_async(url, name="setup.exe"):
             # 程序万一跑在临时目录里，就会一直更新到临时目录去，版本永远不变。
             # /LOG 留一份安装日志，下次再出问题可以直接看。
             logf = os.path.join(os.path.dirname(dest), "install.log")
-            args = [dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART", "/LOG=" + logf]
+            # /RELAUNCH=1：装完自动把新版拉起来（安装脚本里对应的 [Run] 项）。
+            # 不加这个，静默装完程序就没了，用户还得自己再点一次图标。
+            args = [dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART",
+                    "/RELAUNCH=1", "/LOG=" + logf]
             flags = 0
             if os.name == "nt":
                 flags = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            # 先记下「这次要装哪个版本」，用来判断下次启动时要不要再自动重试
+            try:
+                with open(STATE, "w", encoding="utf-8") as f:
+                    json.dump({"tried": ver or name, "at": time.time()}, f)
+            except Exception:
+                pass
             subprocess.Popen(args, close_fds=True, creationflags=flags)
             JOB["state"] = "done"
             threading.Timer(2.5, lambda: os._exit(0)).start()

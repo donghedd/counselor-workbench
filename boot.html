@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>辅导员工作台 · 正在启动</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#f2f5fa;--card:#fff;--line:#e6eaf1;--txt:#1e2635;--sub:#69748a;--accent:#2b6cff}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center}
+  .card{width:420px;max-width:92vw;background:var(--card);border:1px solid var(--line);
+        border-radius:16px;padding:30px 30px 22px;box-shadow:0 10px 32px rgba(24,41,75,.08);text-align:center}
+  .logo{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#2b6cff,#4d8dff);
+        color:#fff;font-size:24px;font-weight:700;display:flex;align-items:center;justify-content:center;
+        margin:0 auto 14px;box-shadow:0 6px 16px rgba(43,108,255,.28)}
+  h1{font-size:17px;margin:0 0 6px;font-weight:700}
+  .sub{font-size:13px;color:var(--sub);margin:0 0 20px;min-height:20px;line-height:1.5}
+  .bar{height:6px;border-radius:99px;background:#eef2f9;overflow:hidden;display:none}
+  .bar.on{display:block}
+  .bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#2b6cff,#5a95ff);
+         transition:width .25s ease}
+  .pct{font-size:12px;color:var(--sub);margin-top:8px;min-height:16px}
+  .foot{margin-top:18px;font-size:12px;color:#9aa4b8}
+  .foot a{color:#8a94a8;text-decoration:none;border-bottom:1px dashed #c8d0de}
+  .foot a:hover{color:var(--accent)}
+  .dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#c8d2e4;margin:0 2px;
+       animation:bl 1.2s infinite}
+  .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+  @keyframes bl{0%,60%,100%{opacity:.25}30%{opacity:1}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">辅</div>
+  <h1>辅导员工作台</h1>
+  <p class="sub" id="msg">正在检查更新<span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
+  <div class="bar" id="bar"><i id="fill"></i></div>
+  <div class="pct" id="pct"></div>
+  <div class="foot"><a href="#" id="skip">跳过，直接打开</a></div>
+</div>
+<script>
+(function(){
+  var msg=document.getElementById("msg"),bar=document.getElementById("bar"),
+      fill=document.getElementById("fill"),pct=document.getElementById("pct"),
+      left=false, timer=null;
+  function go(){
+    if(left)return; left=true;
+    if(timer)clearTimeout(timer);
+    location.replace("/dashboard.html");
+  }
+  document.getElementById("skip").onclick=function(e){e.preventDefault();go()};
+  function setMsg(t){msg.innerHTML=t}
+  // 兜底：不管卡在哪（断网、GitHub 慢），最多等 7 秒就进看板
+  timer=setTimeout(go,7000);
+
+  function poll(){
+    fetch("/api/update/progress",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
+      if(j.state==="error"){
+        setMsg("自动更新失败，先打开当前版本");
+        pct.textContent=(j.err||"").slice(0,80);
+        setTimeout(go,1800);
+        return;
+      }
+      if(j.state==="launching"||j.state==="done"){
+        if(timer)clearTimeout(timer);
+        bar.classList.add("on"); fill.style.width="100%"; pct.textContent="100%";
+        setMsg("安装程序已启动，软件会自动重启到新版本…");
+        return;
+      }
+      var p=j.pct||0;
+      bar.classList.add("on"); fill.style.width=p+"%";
+      pct.textContent=p+"%  ·  "+(j.size?( (j.done/1048576).toFixed(1)+" / "+(j.size/1048576).toFixed(1)+" MB"):"下载中");
+      setTimeout(poll,500);
+    }).catch(go);
+  }
+
+  fetch("/api/update/auto",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
+    if(!j||!j.hasUpdate){go();return}
+    setMsg("发现新版本 <b>v"+(j.latest||"")+"</b>，正在下载安装包…");
+    bar.classList.add("on");
+    return fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url:(j.asset||{}).url,name:(j.asset||{}).name,version:j.latest})})
+      .then(function(r){return r.json()}).then(function(k){
+        if(!k||!k.ok){setMsg("启动更新失败，先打开当前版本");setTimeout(go,1500);return}
+        if(timer)clearTimeout(timer);
+        poll();
+      });
+  }).catch(go);
+})();
+</script>
+</body>
+</html>

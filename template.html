@@ -444,6 +444,8 @@ nav .tab.active + .subnav{display:flex}
 .upd-bar .sp{margin-left:auto;display:flex;gap:8px;align-items:center}
 .sf-link{color:var(--blue);cursor:pointer;text-decoration:none;font-weight:500}
 .sf-link:hover{text-decoration:underline}
+.sf-chk{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:11px;font-weight:400;color:#7c8699;cursor:pointer;user-select:none}
+.sf-chk input{width:12px;height:12px;margin:0;accent-color:#2b6cff;cursor:pointer}
 .fp-tbl{width:100%;font-size:12.5px}
 .fp-tbl th{font-size:11.5px;padding:6px 6px}
 .fp-tbl td{padding:6px 6px;border-bottom:1px solid #eef1f6;vertical-align:middle;white-space:normal}
@@ -506,6 +508,9 @@ nav .tab.active + .subnav{display:flex}
     <div class="sf-t"><span class="sf-dot ro" id="sf-dot"></span><span id="sf-mode">只读模式</span></div>
     <div class="sf-t" style="margin-top:4px;font-weight:400"><span id="app-ver">v—</span>
       <span style="color:#d5dbe6">·</span><a class="sf-link" id="upd-link" onclick="checkUpdate(true)">检查更新</a></div>
+    <label class="sf-chk" title="打开软件时自动检查并安装新版本，装完自动重启">
+      <input type="checkbox" id="auto-upd" onchange="toggleAutoUpdate(this)"> 启动时自动更新
+    </label>
   </div>
 </aside>
 <div class="main">
@@ -2608,6 +2613,32 @@ async function deleteStudent(sid,name){
 const APP_VER=DATA.version||"";
 if($("#app-ver"))$("#app-ver").textContent="v"+(APP_VER||"—");
 let UPD=null;
+/* 启动时自动更新开关（默认开）。真正干活的是启动页 boot.html：它先查一次更新，
+   有新版就静默装完自动重启；这里的开关只是把设置写进 data/settings.json。 */
+let AUTO_UPD=true;
+async function loadUpdCfg(){
+  try{
+    const r=await fetch("/api/update/config");
+    const j=await r.json();
+    if(typeof j.autoUpdate==="boolean")AUTO_UPD=j.autoUpdate;
+  }catch(e){}
+  const c=$("#auto-upd");if(c)c.checked=AUTO_UPD;
+}
+async function toggleAutoUpdate(el){
+  const on=!!(el&&el.checked);
+  try{
+    const r=await fetch("/api/update/settings",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({autoUpdate:on})});
+    const j=await r.json();
+    if(!j.ok)throw new Error(j.error||"保存失败");
+    AUTO_UPD=!!j.autoUpdate;
+    showToast(AUTO_UPD?"已开启：下次打开软件时自动更新":"已关闭：打开软件时不再自动更新");
+  }catch(e){
+    if(el)el.checked=!on;
+    showToast("设置保存失败："+(e.message||"未连接本地服务"),true);
+  }
+}
+loadUpdCfg();
 function hideUpdBanner(){const b=$("#upd-bar");if(b){b.style.display="none";b.innerHTML=""}}
 function openRelease(){
   const u=(UPD&&UPD.page)||"";
@@ -2648,13 +2679,13 @@ function showUpdBanner(j){
 async function doUpdate(){
   if(!UPD||!UPD.asset){openRelease();return}
   if(!await uiConfirm({title:"更新到 v"+UPD.latest+"？",ok:"立即更新",
-    body:"将下载安装包并覆盖安装。\n\n· 本程序会自动关闭，安装完成后从桌面图标重新打开\n· data / photos_src / 备份 目录不会被覆盖，学生数据保留"}))return;
+    body:"将下载安装包并覆盖安装。\n\n· 本程序会自动关闭，装完自动重启到新版本\n· data / photos_src / 备份 目录不会被覆盖，学生数据保留"}))return;
   const bar=$("#upd-bar");
   bar.innerHTML='<span>正在下载 <b>v'+esc(UPD.latest)+'</b>…</span><span class="small" id="upd-pct">0%</span>'+
     '<span class="sp"><span class="small" style="color:#5b6b86">下载期间请勿关闭窗口</span></span>';
   try{
     const r=await fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url:UPD.asset.url,name:UPD.asset.name||"setup.exe"})});
+      body:JSON.stringify({url:UPD.asset.url,name:UPD.asset.name||"setup.exe",version:UPD.latest})});
     const j=await r.json();
     if(!j.ok){showToast("启动更新失败："+(j.error||""),true);return}
   }catch(e){showToast("启动更新失败：未连接本地服务",true);return}
