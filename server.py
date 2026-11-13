@@ -1274,6 +1274,7 @@ class Handler(SimpleHTTPRequestHandler):
             ln = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(ln).decode("utf-8"))
             changed = 0
+            year_touched = False
             for t, items in payload.items():
                 if t not in TABLES:
                     raise ValueError("未知数据表: %s" % t)
@@ -1298,8 +1299,17 @@ class Handler(SimpleHTTPRequestHandler):
                     for col, val in it["cells"].items():
                         rows[ri][find_col(col)] = str(val)
                         changed += 1
+                        # 「在校学年」影响学业阈值的取用，改完要重跑成绩分析
+                        if t == "students" and col == "在校学年":
+                            year_touched = True
                 with open(p, "w", encoding="utf-8-sig", newline="") as f:
                     csv.writer(f).writerows(rows)
+            # 学年变了先重算分析（写回 13_成绩分析.json），再重建看板让它内嵌新结果
+            if year_touched:
+                try:
+                    _reanalyze()
+                except Exception:
+                    pass
             # 重建看板与脱敏版
             rebuild_dashboard()
             # 被修改的表同步回 SQLite（只覆盖这几张表，保留数据库里其他表的人工改动）

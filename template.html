@@ -670,6 +670,7 @@ const EDITABLE = {
   ldProjects: ["负责教师","基地/地点","起止日期","学时","项目状态"],
 };
 const ENUM_SEL = {"毕业去向":["考研","保研","留学","就业","考公考编","自由职业","暂无"],
+                  "在校学年":["1","2","3","4","5","6"],
                   "去向确认状态":["已确认","待确认","待排查"],
                   "认定状态":["待审核","已认定","不通过"],
                   "状态":["未开始","进行中","已完成","已关闭"],
@@ -1657,7 +1658,7 @@ let AC_PLAN_MJ=null;
 const AC_FOLD={};                                 // 折叠状态：「专业||类别key」-> true(收起)/false(展开)
 /* 自由选课类课组：方案里列出的是可选课程（实际课程池远大于此），修够课组学分即可。
    照常显示，但标题上标注清楚，避免误读成「必须修这些课」。 */
-const AC_FREE_CAT=/文化素质类|四史类|外语拓展|外语基础|学科交叉|艺术类/;
+const AC_FREE_CAT=/文化素质类|外语拓展|外语基础|学科交叉|艺术类/;
 /* 课程池不固定的课组（文化素质、学科交叉）：一门课都不罗列，只标要求学分；
    子类（哲学社会科学 / 文化交流与国际视野 / 自然科学与工程技术 / 艺术体育）照常列出。
    四史类相反——固定四门课，照常罗列。 */
@@ -1761,6 +1762,7 @@ function renderAcPlans(){
     kids.forEach(k=>{body+=renderNode(k)});
     let extra=(kids.length?" ｜ 含子类":"");
     if(hideRows)extra+=" ｜ 修够学分即达标";
+    else if(/四史类/.test(n.key))extra+=" ｜ 固定 "+n.rows.length+" 门，修其中 1 门（"+((n.rows[0]&&n.rows[0].c)||2)+" 学分）即达标";
     else if(AC_FREE_CAT.test(n.key))extra+=" ｜ 自由选课，学分达标即可（下方为方案列出的可选课）";
     return acCatSec(n.key,n.depth,n.req,n.rows,body,extra);
   }
@@ -2016,11 +2018,9 @@ function toggleWz(){const d=$("#wz-detail");if(d)d.style.display=d.style.display
 /* ---------- 在校学年（休学/降级后按实际年级判定警示） ---------- */
 function studyYearKv(x){
   const p=ASTU[x["学号"]]||{};
-  const manual=String(x["在校学年"]||"").trim()||String(p.yearManual||"");
-  const eff=String(p.year||manual||"");
-  const opts=[1,2,3,4,5,6].map(n=>'<option value="'+n+'"'+(String(n)===eff?' selected':'')+'>'+n+'</option>').join("");
-  return '<div class="k">在校学年</div><div>第 <select class="ed-sel" '+(EDIT?'':'disabled title="只读模式：请用编辑模式打开后再修改"')+' onchange="setStudyYear(\''+x["学号"]+'\',this)">'+opts+'</select> 学年'+
-    (manual?'':' <span class="small">（按学号推算）</span>')+'</div>';
+  /* 直接给出判定用的学年：优先人工设定值，其次按学号推算值；修改在「编辑此学生」里 */
+  const eff=String(p.year||String(x["在校学年"]||"").trim()||"");
+  return '<div class="k">在校学年</div><div>第 <b>'+(eff||"—")+'</b> 学年</div>';
 }
 async function setStudyYear(sid,sel){
   const n=Number(sel.value), p=ASTU[sid]||{};
@@ -2132,10 +2132,17 @@ function editStudent(sid){
   if(!EDIT){alert("当前为只读模式：请用「启动编辑模式.bat」打开看板后再编辑");return}
   const x=S.find(s=>s["学号"]===sid);if(!x)return;
   const fld=f=>{
+    /* 在校学年：默认按当前判定值（人工设定值优先，否则按学号推算）填好，改不改都行 */
+    if(f==="在校学年"){
+      const cur=String(x[f]||"").trim()||String((ASTU[sid]||{}).year||"");
+      return '<div class="k">在校学年</div><div><select class="mv" data-f="在校学年">'+
+        ["1","2","3","4","5","6"].map(o=>'<option'+(o===cur?' selected':'')+'>'+o+'</option>').join("")+
+        '</select> <span class="small">第 N 学年（休学/降级后按实际年级选；保存后按该学年判定学业警示）</span></div>';
+    }
     if(ENUM_SEL[f])return '<div class="k">'+esc(f)+'</div><div><select class="mv" data-f="'+esc(f)+'">'+[""].concat(ENUM_SEL[f]).map(o=>'<option'+((x[f]||"")===o?' selected':'')+'>'+esc(o||"(空)")+'</option>').join("")+'</select></div>';
     return '<div class="k">'+esc(f)+'</div><div><input class="mv" data-f="'+esc(f)+'" value="'+esc(x[f]||"")+'"></div>';
   };
-  const base=["姓名","性别","专业","班级","手机号","寝室号","籍贯","政治面貌","职务","性格","特长","毕业去向","去向确认状态"];
+  const base=["姓名","性别","专业","班级","在校学年","手机号","寝室号","籍贯","政治面貌","职务","性格","特长","毕业去向","去向确认状态"];
   /* 字段按毕业去向精简：
      考研/保研/留学 → 报考学校、报考结果（复试面试时间/材料齐全/录取通知已删）
      就业/考公考编 → 单位名称、地区、三方合同状态（岗位/签约日期/三方协议/劳动合同已删）

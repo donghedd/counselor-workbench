@@ -1007,15 +1007,21 @@ def analyze_grades(fname, data):
             if not _checkable(key) and key not in cg_leaf:
                 continue
             got = round(catEarned.get(key, 0.0), 1)
-            # 外语拓展组：英语类课程学分合池（基础课外溢/拓展课互认，方案导出表的组别常有出入）
-            # 外语基础组不走合池：基础组要修的是「同一语种的基础课序列」（如通用英语Ⅰ-1、Ⅰ-2），
-            # 拓展课（英语实践2、大学英语写作…）不能顶替缺的那门基础课，
-            # 否则只修了 Ⅰ-1 的学生会被 Ⅰ-4 + 英语实践2 凑满 8 分，基础组缺口永远不提示。
-            if key.split(" > ")[-1] == "外语拓展课组I类":
-                got = en_credits
+            # 外语基础组要修的是「同一语种的基础课序列」（如通用英语Ⅰ-1、Ⅰ-2），
+            # 拓展课（英语实践2、大学英语写作…）不能顶替缺的那门基础课；
+            # 外语拓展组也不能反过来用基础课凑——否则只修了 Ⅰ-1 的学生会被 Ⅰ-4 +
+            # 英语实践2 凑满 8 分，基础组缺口永远不提示。两个组都按方案归口统计。
             if got < req - 0.05:
                 short_all.append({"k": key, "req": req, "got": got})
-        short = [s for s in short_all if not any(o["k"].startswith(s["k"] + " > ") for o in short_all)]
+        # 父组（汇总组）的缺口若完全由子组造成，就只报子组、不报父组：
+        # 否则「通识限选差 2 学分」看不出差在哪（实际是外语拓展组少 2 分），
+        # 容易被当成四史/文化素质的学分没算进去。
+        short = []
+        for s in short_all:
+            kids = [o for o in short_all if o["k"].startswith(s["k"] + " > ")]
+            if kids and sum(o["req"] - o["got"] for o in kids) >= (s["req"] - s["got"]) - 0.05:
+                continue
+            short.append(s)
         # 修业年限：默认按学号入学年推算；休学/降级等以学生主表的「在校学年」为准
         yv = max(1, cur[0] - entry + 1)
         yv_manual = ""
