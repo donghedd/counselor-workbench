@@ -307,9 +307,12 @@ select.ed-sel.mini{padding:1px 4px;font-size:11.5px;border-radius:6px}
 .todo-del{padding:1px 9px;font-size:11.5px;border-radius:999px;color:#5b6678;background:#fff;flex:0 0 auto}
 .todo-del:hover{color:var(--red);border-color:#f0c2c2;background:var(--red-bg)}
 .row-ops{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-/* 风险提示表：等级居中、操作贴右缘，别在中间留一大段空白 */
-.risk-tbl th:nth-child(4),.risk-tbl td:nth-child(4){text-align:center}
+/* 风险提示表：勾选列/等级居中、操作贴右缘，别在中间留一大段空白 */
+.risk-tbl th:nth-child(1),.risk-tbl td:nth-child(1){text-align:center}
+.risk-tbl th:nth-child(5),.risk-tbl td:nth-child(5){text-align:center}
 .risk-tbl th:last-child,.risk-tbl td:last-child{text-align:right}
+.risk-tbl input[type=checkbox]{width:14px;height:14px;accent-color:var(--green);cursor:pointer;vertical-align:middle}
+.risk-tbl tr.rdone td{color:#a3adbb}
 /* 最新风险提示：自动检测区 + 工具条 */
 .ov-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px}
 .ov-btns{margin-left:auto;display:flex;gap:8px}
@@ -1099,6 +1102,11 @@ function toggleTodo(i,on){
   /* 只改这一行的样式，不重排列表：勾完后仍在原位，不会跳到别的页 */
   const row=document.querySelector('#ch-todo .todo-row[data-i="'+i+'"]');
   if(row)row.classList.toggle("done",v==="已完成");
+  /* 风险提示表同步：勾选框状态 + 整行置灰，未完成计数同步更新 */
+  const orow=document.querySelector('#ov-risk tr[data-i="'+i+'"]');
+  if(orow){orow.classList.toggle("rdone",v==="已完成");
+    const cb=orow.querySelector('td input[type=checkbox]');if(cb)cb.checked=v==="已完成";}
+  const oc=$("#ov-cnt-open");if(oc)oc.textContent=T.filter(r=>!todoDone(r)).length;
   todoStat();refreshSaveBar();
   showToast(v==="已完成"?"已勾选完成，点「保存」写入表格":"已取消勾选，点「保存」写入表格");
 }
@@ -1247,7 +1255,7 @@ function renderOvRisk(){
   const open=T.filter(x=>!todoDone(x));
   const iss=detectIssues(),pend=iss.filter(i=>!i.inTodo);
   const head='<div class="ov-tools"><span class="small">系统检测 <b>'+iss.length+'</b> 项 · 待加入 <b>'+pend.length+
-      '</b> 项 · 待办未完成 <b>'+open.length+'</b> 条</span>'+
+      '</b> 项 · 待办未完成 <b id="ov-cnt-open">'+open.length+'</b> 条</span>'+
     (EDIT?'<span class="ov-btns"><button class="btn" onclick="renderOvRisk()" title="按当前数据重新检测">↻ 重新检测</button>'+
       '<button class="btn" onclick="addTodo()">+ 新增待办</button></span>':'')+'</div>';
   const auto=pend.length
@@ -1258,9 +1266,9 @@ function renderOvRisk(){
           '<span class="ai-lv">'+tag(it.lv)+'</span>'+
           (EDIT?'<button class="btn ai-add" onclick="adoptIssue('+i+')">＋ 加入待办</button>':'')+'</div>'}).join("")+'</div>'
     : '<div class="auto-ok">✓ 没有新的自动检测项'+(iss.length?'（检测到的 '+iss.length+' 项都已在待办表中）':'')+'</div>';
-  const table='<table class="tbl-fixed risk-tbl"><colgroup><col style="width:9%"><col style="width:13%"><col style="width:55%"><col style="width:8%"><col style="width:15%"></colgroup>'+
-    '<tr><th>工作域</th><th>对象</th><th>事项</th><th>等级</th><th>操作</th></tr>'+
-    pgSlice("ov-risk",open,10).map(t=>'<tr><td>'+esc(t["工作域"]||"")+'</td><td>'+esc(t["对象"]||"")+'</td>'+
+  const table='<table class="tbl-fixed risk-tbl"><colgroup><col style="width:5%"><col style="width:8%"><col style="width:12%"><col style="width:52%"><col style="width:8%"><col style="width:15%"></colgroup>'+
+    '<tr><th title="勾选=标记已完成">✓</th><th>工作域</th><th>对象</th><th>事项</th><th>等级</th><th>操作</th></tr>'+
+    pgSlice("ov-risk",open,10).map(t=>'<tr data-i="'+t._i+'"><td>'+(EDIT?'<input type="checkbox" title="勾选=标记已完成" onclick="toggleTodo('+t._i+',this.checked)">':'')+'</td><td>'+esc(t["工作域"]||"")+'</td><td>'+esc(t["对象"]||"")+'</td>'+
       '<td>'+esc(t["事项"]||"")+'</td><td>'+tag(t["风险等级"])+'</td>'+
       '<td>'+(EDIT?'<span class="row-ops"><button class="btn todo-edit" onclick="editTodo('+t._i+')" title="编辑这条待办">✎ 编辑</button>'+
         '<button class="btn todo-del" onclick="delTodo('+t._i+')" title="删除这条待办">✕ 删除</button></span>':'')+'</td></tr>').join("")+'</table>';
