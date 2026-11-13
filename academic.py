@@ -974,6 +974,7 @@ def analyze_grades(fname, data):
         earned = round(sum(passed_best.values()), 1)
         # 类别学分累计（按归口课号：替代/认定过的课算到方案内那门课上，同一门课只计一次）
         catEarned = collections.defaultdict(float)
+        catCount = collections.defaultdict(int)   # 同一课组已修门数（界面标「已得 X 学分 · N 门」，防把学分看成门数）
         extra = []
         en_credits = 0.0   # 英语学分合池（按归口课号去重，防替代课号重复计分）
         for rep, (credit, r) in hit_best.items():
@@ -981,6 +982,7 @@ def analyze_grades(fname, data):
             if cat[0] == "学科交叉课组":
                 extra.append({"n": (r.get("课程名") or "").strip(), "c": credit, "t": term_label(tk_of(r))})
                 catEarned["学科交叉课组"] += credit
+                catCount["学科交叉课组"] += 1
                 continue
             # 方案外课程（归口课号不在方案、课名也对不上方案里的课）：只有「自由选课池」
             # 类课组（文化素质/外语/艺术类/交叉）才能按同类计入；固定课组（体育专项、
@@ -993,6 +995,7 @@ def analyze_grades(fname, data):
                 en_credits += credit
             for i in range(1, len(cat) + 1):
                 catEarned[" > ".join(cat[:i])] += credit
+                catCount[" > ".join(cat[:i])] += 1
         # 方案缺口（叶子层）
         reqs = {c["key"]: c["req"] for c in plan.get("cats", [])}
         en_credits = round(en_credits, 1)
@@ -1049,7 +1052,14 @@ def analyze_grades(fname, data):
                 if cat is None or _is_flex_cat(cat):
                     continue  # 文化素质/外语/学科交叉属自由选课凑学分，只记课组学分缺口
                 key = " > ".join(cat)
-                if not _short_hit(key, shortfall_keys):
+                hit = _short_key_of(key, shortfall_keys)
+                if hit is None:
+                    continue
+                # 叶子组自己有独立学分要求、能按成绩归口核对、且已经达标时，
+                # 不拿它的课去凑上层汇总组的缺口：
+                # 四史类 2 分修够后，顶层「通识限选」差 2 分不该再点名另外三门四史
+                #（四史类是自由选课达标即可；上层缺口由说明里的学分缺口提示）。
+                if hit != key and key in reqs and _checkable(key) and not _is_flex_cat(key):
                     continue
                 mt = plan_term(code)
                 if mt is None or mt > last_completed:
@@ -1066,7 +1076,9 @@ def analyze_grades(fname, data):
                 # 限选类课组仍有选择余地：按学分缺口列到凑够为止。
                 must_all = key.split(" > ")[0] in ("通识必修", "学科必修", "专业必修") \
                            or no_choice(major, key)
-                gap = next((round(s2["req"] - s2["got"], 1) for s2 in short if s2["k"] == key), None)
+                # 缺口取「命中的缺口组」（自身或最近祖先）的差值：
+                # 用祖先缺口限额时，列到凑够就停，不再把整组没修的课全列出来
+                gap = next((round(s2["req"] - s2["got"], 1) for s2 in short if s2["k"] == hit), None)
                 acc = 0.0
                 for x in sorted(items, key=lambda x: (x["_tk"], -x["pop"])):
                     missing.append({k2: v for k2, v in x.items() if not k2.startswith("_")})
@@ -1084,6 +1096,7 @@ def analyze_grades(fname, data):
         flex_short = [s for s in short if _leaf_of(s["k"]) in FLEX_GROUPS]
         strict_short = [s for s in short if _leaf_of(s["k"]) not in FLEX_GROUPS]
         unearned_g = [{"n": _leaf_of(s["k"]), "k": s["k"], "req": s["req"], "got": s["got"],
+                       "cnt": catCount.get(s["k"], 0),
                        "short": round(s["req"] - s["got"], 1)}
                       for s in sorted(flex_short, key=lambda x: -(x["req"] - x["got"]))]
         unearned_c = []
@@ -1131,7 +1144,9 @@ def analyze_grades(fname, data):
         for sk in short:
             leaf = sk["k"].split(" > ")[-1]
             if leaf in FLEX_GROUPS:
-                notes.append("%s差 %.1f 学分（需补选同类课程）" % (leaf, sk["req"] - sk["got"]))
+                notes.append("%s差 %.1f 学分（已得 %.1f/%g 学分 · %d 门课）"
+                             % (leaf, sk["req"] - sk["got"], sk["got"], sk["req"],
+                                catCount.get(sk["k"], 0)))
         # 方案内仍未拿到的课：挂了、且所属课组仍处于缺口状态
         short_keys = {s["k"] for s in short}
         fail_short = [f for f in failed if _short_hit(f.get("cat"), short_keys)]
@@ -1299,13 +1314,22 @@ def _short_hit(cat, short_keys):
     例如「通识限选 > 体育类-限选 > 体育俱乐部」缺学分时，同属通识限选的
     「四史类」并不缺 —— 四史类四门课修过任意一门（2 学分）即达标，不应被点名。
     """
+    return _short_key_of(cat, short_keys) is not None
+
+
+def _short_key_of(cat, short_keys):
+    """返回覆盖该课组的缺口 key（自身或最近的祖先组）；不在任何缺口里则 None。"""
     cat = cat or ""
     if not cat:
-        return False
-    for k in short_keys:
-        if cat == k or cat.startswith(k + " > "):
-            return True
-    return False
+        return None
+    if cat in short_keys:
+        return cat
+    parts = cat.split(" > ")
+    for i in range(len(parts) - 1, 0, -1):
+        k = " > ".join(parts[:i])
+        if k in short_keys:
+            return k
+    return None
 
 
 def load_academic():

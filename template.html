@@ -513,6 +513,7 @@ nav .tab.active + .subnav{display:flex}
   <span id="gen-at"></span>
   <input id="gsearch" placeholder="搜索姓名 / 学号，回车查看详情">
   <div class="hd-acts">
+    <button class="btn" onclick="location.reload()" title="重新加载最新数据">刷新</button>
     <button class="btn" onclick="tplModal()">下载模板</button>
     <button class="btn" onclick="impModal()">导入表格</button>
     <button class="btn" onclick="expModal()">导出表格</button>
@@ -1693,8 +1694,12 @@ function acCatSec(key,depth,req,rows,body,extra){
   const name=(key==="@other")?"其他课程":key.split(" > ").pop();
   const sum=rows.reduce((a,x)=>a+(x.c||0),0);
   const fold=!!body&&acIsFolded(key,depth);
-  const meta=(req===null||req===undefined?"":("要求学分 "+req+" ｜ "))+
-    (rows.length?('本类课程 '+rows.length+' 门（合计 '+sum.toFixed(1)+' 学分）'):'本类未列课程')+(extra||"");
+  /* 课程池不固定的组（文化素质/学科交叉）不报「本类课程 N 门」：
+     那是方案导出文件里的样例课数，既不是学生已修门数、也不是可选课总量，容易被误读 */
+  const pool=AC_NO_ROWS.test(key);
+  const meta=(req===null||req===undefined||!req?"":("要求学分 "+req+" ｜ "))+
+    (pool?"自由选课，不列课程":
+      (rows.length?('本类课程 '+rows.length+' 门（合计 '+sum.toFixed(1)+' 学分）'):'本类未列课程'))+(extra||"");
   return '<div class="plan-sec'+(fold?' folded':'')+'" data-k="'+esc(key)+'" data-d="'+depth+'">'+
     '<div class="plan-cat'+(depth>1?' sub':'')+'" style="margin-left:'+((depth-1)*20)+'px" onclick="acToggle(this)">'+
       '<span class="pc-caret">▼</span><b>'+esc(name)+'</b><span class="small">'+meta+'</span></div>'+
@@ -1745,9 +1750,9 @@ function renderAcPlans(){
     const hideRows=AC_NO_ROWS.test(n.key);
     let body="";
     if(n.rows.length&&hideRows){
-      // 自由选课池：不逐门罗列，只说明「池子里有多少可选、要修多少分」
+      // 自由选课池：一门都不列，也不报门数（门数是方案样例课数量，不是学生已修门数）
       body+='<div class="small" style="padding:2px 0 8px '+((n.depth-1)*20+24)+'px;color:var(--sub)">'+
-        '课程池不固定，方案内共列 '+n.rows.length+' 门可选课，此处不逐门罗列；修满 '+(n.req||0)+' 学分即可</div>';
+        '课程池不固定，不逐门罗列；修满 '+(n.req||0)+' 学分即可（可选课程见教务选课系统）</div>';
     }else if(n.rows.length){
       body+=acCatRows(n.rows,n.depth);
     }else if(!kids.length){
@@ -1755,7 +1760,7 @@ function renderAcPlans(){
     }
     kids.forEach(k=>{body+=renderNode(k)});
     let extra=(kids.length?" ｜ 含子类":"");
-    if(hideRows)extra+=" ｜ 自由选课，只看要求学分";
+    if(hideRows)extra+=" ｜ 修够学分即达标";
     else if(AC_FREE_CAT.test(n.key))extra+=" ｜ 自由选课，学分达标即可（下方为方案列出的可选课）";
     return acCatSec(n.key,n.depth,n.req,n.rows,body,extra);
   }
@@ -1908,7 +1913,7 @@ function acBlock(sid){
   const hasAny=(p.failed||[]).length||(p.missing||[]).length||(p.short||[]).length||mw.length;
   if(!hasAny){h+='<div class="small" style="margin:4px 0">截止目前没有未获学分的科目</div>'}
   const UE=p.unearned||{g:[],c:[]};
-  const ueRows=(UE.g||[]).map(s=>'<tr><td><b>'+esc(s.n)+'</b></td><td class="small">课程组</td><td><span class="tag tr">还差 '+s.short+' 学分</span>'+(s.req>s.got?' <span class="small">（要求 '+s.req+'，已得 '+s.got+'）</span>':'')+'</td><td>'+s.req+'</td></tr>')
+  const ueRows=(UE.g||[]).map(s=>'<tr><td><b>'+esc(s.n)+'</b></td><td class="small">课程组</td><td><span class="tag tr">还差 '+s.short+' 学分</span>'+(s.req>s.got?' <span class="small">（要求 '+s.req+'，已得 '+s.got+' 学分'+(s.cnt?' · '+s.cnt+' 门课':'')+'）</span>':'')+'</td><td>'+s.req+'</td></tr>')
     .concat((UE.c||[]).map(c=>{
       const leaf=String(c.cat||"").split(" > ").pop()||"—";
       const st=String(c.status||"");
