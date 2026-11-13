@@ -2457,7 +2457,7 @@ async function importPhotos(inp){
 function imgModal(){
   if(!needEdit())return;
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>导入照片</h3>'+
-    '<div class="small" style="margin-bottom:12px">支持：<b>纯学号</b>（20xxxxxxxxxx.jpg）、<b>学号-姓名</b>（20xxxxxxxxxx-姓名.jpg）、<b>姓名-学号</b>（姓名-20xxxxxxxxxx.jpg）三种命名方式，支持同时选择多张图片。<br>照片会自动压缩为 460px 缩略图存入 photos/，不改动任何原图。</div>'+
+    '<div class="small" style="margin-bottom:12px">支持：<b>纯学号</b>（20xxxxxxxxxx.jpg）、<b>学号-姓名</b>（20xxxxxxxxxx-姓名.jpg）、<b>姓名-学号</b>（姓名-20xxxxxxxxxx.jpg）三种命名方式，支持同时选择多张图片。</div>'+
     '<div class="drop" id="img-drop"><div class="dz-t">把照片拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'img-file\')">选择照片…</button>'+
       '<div class="dz-s">支持 JPG / PNG / WebP / BMP / GIF / TIFF，可多选</div></div>'+
