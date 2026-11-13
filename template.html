@@ -326,7 +326,15 @@ select.ed-sel.mini{padding:1px 4px;font-size:11.5px;border-radius:6px}
 .ai-lv{flex:0 0 auto;display:flex}
 .ai-add{flex:0 0 auto;padding:1px 10px;font-size:11.5px;border-radius:999px;color:var(--blue);border-color:#c7d8f8;background:#f5f8ff}
 .ai-add:hover{background:#eaf1ff;border-color:#a8c4f5}
+.ai-ops{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;margin-left:2px}
+.ai-del{flex:0 0 auto;padding:1px 9px;font-size:11.5px;border-radius:999px;color:#5b6678;background:#fff}
+.ai-del:hover{color:var(--red);border-color:#f0c2c2;background:var(--red-bg)}
+.ai-restore{float:right;font-size:11px;color:var(--blue);cursor:pointer}
+.ai-restore:hover{text-decoration:underline}
 .auto-ok{font-size:12px;color:#1a7f37;background:#f2faf4;border:1px solid #d9f0e0;border-radius:10px;padding:7px 12px;margin-bottom:12px}
+/* 自动检测区挂在待办卡内：与列表之间留一点距离，底部不要多出空白 */
+#ch-todo .auto-wrap{margin:12px 0 2px}
+#ch-todo .auto-ok{margin-bottom:0}
 td.ed{cursor:text;outline:none}
 td.ed:hover{background:var(--yellow-bg)}
 td.ed:focus{background:#fff;box-shadow:inset 0 0 0 2px var(--blue);border-radius:4px}
@@ -528,8 +536,6 @@ nav .tab.active + .subnav{display:flex}
       <span><span class="dot" style="background:var(--red)"></span>红=风险/未落实/缺失/过期</span>
       <span><span class="dot" style="background:var(--gray)"></span>灰=待补充/不适用</span>
     </div>
-    <h2 class="sec">最新风险提示</h2>
-    <div class="panel" id="ov-risk"></div>
   </section>
 
   <!-- ============ 毕业班 ============ -->
@@ -846,7 +852,6 @@ function refreshAfterSave(){
     /* 总览：图表与待办随数据变化重绘 */
     renderOverviewCharts();
     renderTodoCard();
-    renderOvRisk();
     if($("#p-grad").classList.contains("active")){
       renderMain();
       if($("#gv-board")&&$("#gv-board").style.display!=="none")renderCat();
@@ -1102,11 +1107,6 @@ function toggleTodo(i,on){
   /* 只改这一行的样式，不重排列表：勾完后仍在原位，不会跳到别的页 */
   const row=document.querySelector('#ch-todo .todo-row[data-i="'+i+'"]');
   if(row)row.classList.toggle("done",v==="已完成");
-  /* 风险提示表同步：勾选框状态 + 整行置灰，未完成计数同步更新 */
-  const orow=document.querySelector('#ov-risk tr[data-i="'+i+'"]');
-  if(orow){orow.classList.toggle("rdone",v==="已完成");
-    const cb=orow.querySelector('td input[type=checkbox]');if(cb)cb.checked=v==="已完成";}
-  const oc=$("#ov-cnt-open");if(oc)oc.textContent=T.filter(r=>!todoDone(r)).length;
   todoStat();refreshSaveBar();
   showToast(v==="已完成"?"已勾选完成，点「保存」写入表格":"已取消勾选，点「保存」写入表格");
 }
@@ -1120,7 +1120,8 @@ function renderTodoCard(){
   const el=$("#ch-todo");if(!el)return;
   const rows=todoSorted();
   const head='<div class="todo-top"><span class="small" id="td-stat"></span>'+
-    (EDIT?'<button class="btn" style="margin-left:auto" onclick="addTodo()">+ 新增待办</button>':'')+'</div>';
+    (EDIT?'<button class="btn" style="margin-left:auto" onclick="renderTodoCard()" title="按当前数据重新检测">↻ 重新检测</button>'+
+      '<button class="btn" onclick="addTodo()">+ 新增待办</button>':'')+'</div>';
   const list=pgSlice("ch-todo",rows,10).map(r=>{
     const i=r._i,dn=todoDone(r),note=String(r["说明"]||"").trim();
     const sub=[String(r["工作域"]||"").trim(),String(r["对象"]||"").trim()].filter(Boolean).join(" · ");
@@ -1134,7 +1135,7 @@ function renderTodoCard(){
         (EDIT?'<button class="btn todo-edit" onclick="editTodo('+i+')" title="编辑这条待办">✎ 编辑</button>':'')+
       '</div></div>';
   }).join("")||'<div class="empty">暂无待办</div>';
-  el.innerHTML=head+list+pgBar("ch-todo",rows.length,"条",10);
+  el.innerHTML=head+list+pgBar("ch-todo",rows.length,"条",10)+renderAutoBlock();
   todoStat();
 }
 /* 点「编辑」弹窗改这一条，保存即写回 CSV（单行 /api/save） */
@@ -1154,7 +1155,7 @@ async function editTodo(i,focusKey){
     Object.assign(rec,cells);
     /* 这一条已落盘，清掉它残留的未保存标记 */
     if(edits.todos[i]){Object.keys(cells).forEach(k=>{delete edits.todos[i][k]});if(!Object.keys(edits.todos[i]).length)delete edits.todos[i]}
-    refreshSaveBar();renderTodoCard();renderOvRisk();
+    refreshSaveBar();renderTodoCard();
     showToast("已保存修改");
   }catch(err){showToast("保存失败（未连接本地编辑服务）："+err,true)}
 }
@@ -1177,7 +1178,7 @@ async function delTodo(i){
     const old=edits.todos||{},neu={};
     Object.keys(old).forEach(k=>{const n=+k;if(n===i)return;neu[n>i?n-1:n]=old[k]});
     edits.todos=neu;
-    refreshSaveBar();renderTodoCard();renderOvRisk();
+    refreshSaveBar();renderTodoCard();
     showToast("已删除这条待办");
   }catch(err){showToast("删除失败（未连接本地编辑服务）："+err,true)}
 }
@@ -1187,13 +1188,16 @@ async function addTodo(){
   const rec=await postTodo({事项:v.事项,说明:v.说明,工作域:v.工作域,对象:v.对象,
     截止日期:v.截止日期,风险等级:v.风险等级,状态:"未开始",来源:"手工新增"});
   if(!rec)return;
-  pgState("ch-todo").p=1;renderTodoCard();renderOvRisk();
+  pgState("ch-todo").p=1;renderTodoCard();
   showToast("已新增待办（已写入表格）");
 }
 const classes=[...new Set(S.map(x=>x["班级"]))].sort();
 function renderOverviewCharts(){renderDepart();renderClass();}
 renderOverviewCharts();
-renderTodoCard();
+/* 照片索引：须在 renderTodoCard()/detectIssues() 首次调用前定义（证件照缺失检测要用） */
+const PHOTO=DATA.photos||{},THUMBS=new Set(DATA.thumbs||[]);
+function hasPhotoOf(sid){return THUMBS.has(sid)||!!PHOTO[sid]}
+function anyPhoto(){return Object.keys(PHOTO).length>0||THUMBS.size>0}
 /* ---------- 自动检测：按当前数据实时算出「该办但还没进待办表」的问题 ----------
    事项文案固定（数字放「对象」列），便于用关键词与待办表已有记录去重。 */
 let AUTO_ISSUES=[];
@@ -1225,6 +1229,11 @@ function detectIssues(){
   const talkSid=new Set((DATA.talks||[]).map(t=>String(t["学号"]||"").trim()).filter(Boolean));
   const noTalk=stuRisk.filter(x=>!talkSid.has(String(x["学号"]||"").trim()));
   if(noTalk.length)add("毕业班",noTalk.length+" 人","风险学生本学期尚无谈话记录，需补录","中",["谈话"]);
+  /* 9) 证件照缺失：已导入过照片（存在缩略图）但仍有学生没有，提示补齐 */
+  if(anyPhoto()){
+    const noPhoto=S.filter(x=>!hasPhotoOf(x["学号"]));
+    if(noPhoto.length)add("毕业班",noPhoto.length+" 人","部分学生缺少证件照，需补拍或导入","低",["证件照"]);
+  }
   /* 与「未完成」的待办按关键词去重：事项里同时包含全部关键词即视为已加入 */
   const live=T.filter(t=>!todoDone(t));
   AUTO_ISSUES=out.map(o=>Object.assign({},o,{inTodo:live.some(t=>o.kw.every(k=>String(t["事项"]||"").indexOf(k)>=0))}));
@@ -1246,40 +1255,52 @@ async function adoptIssue(i){
   const rec=await postTodo({事项:it.item,说明:"由系统检测生成（"+it.obj+"）",工作域:it.dom,对象:it.obj,
     截止日期:"待补充",风险等级:it.lv,状态:"未开始",来源:"自动检测"});
   if(!rec)return;
-  renderTodoCard();renderOvRisk();
+  renderTodoCard();
   showToast("已加入待办（已写入表格）");
 }
-function renderOvRisk(){
-  const el=$("#ov-risk");if(!el)return;
-  /* 用实时未完成列表（勾选/改状态后无需刷新即同步） */
-  const open=T.filter(x=>!todoDone(x));
-  const iss=detectIssues(),pend=iss.filter(i=>!i.inTodo);
-  const head='<div class="ov-tools"><span class="small">系统检测 <b>'+iss.length+'</b> 项 · 待加入 <b>'+pend.length+
-      '</b> 项 · 待办未完成 <b id="ov-cnt-open">'+open.length+'</b> 条</span>'+
-    (EDIT?'<span class="ov-btns"><button class="btn" onclick="renderOvRisk()" title="按当前数据重新检测">↻ 重新检测</button>'+
-      '<button class="btn" onclick="addTodo()">+ 新增待办</button></span>':'')+'</div>';
-  const auto=pend.length
-    ? '<div class="auto-wrap"><div class="auto-title">自动检测 · 当前数据里发现的问题（点「加入待办」写入表格）</div>'+
-      pend.map(it=>{const i=iss.indexOf(it);
-        return '<div class="auto-row"><span class="ai-badge">自动</span><span class="ai-dom">'+esc(it.dom)+'</span>'+
-          '<span class="ai-obj">'+esc(it.obj)+'</span><span class="ai-item">'+esc(it.item)+'</span>'+
-          '<span class="ai-lv">'+tag(it.lv)+'</span>'+
-          (EDIT?'<button class="btn ai-add" onclick="adoptIssue('+i+')">＋ 加入待办</button>':'')+'</div>'}).join("")+'</div>'
-    : '<div class="auto-ok">✓ 没有新的自动检测项'+(iss.length?'（检测到的 '+iss.length+' 项都已在待办表中）':'')+'</div>';
-  const table='<table class="tbl-fixed risk-tbl"><colgroup><col style="width:5%"><col style="width:8%"><col style="width:12%"><col style="width:52%"><col style="width:8%"><col style="width:15%"></colgroup>'+
-    '<tr><th title="勾选=标记已完成">✓</th><th>工作域</th><th>对象</th><th>事项</th><th>等级</th><th>操作</th></tr>'+
-    pgSlice("ov-risk",open,10).map(t=>'<tr data-i="'+t._i+'"><td>'+(EDIT?'<input type="checkbox" title="勾选=标记已完成" onclick="toggleTodo('+t._i+',this.checked)">':'')+'</td><td>'+esc(t["工作域"]||"")+'</td><td>'+esc(t["对象"]||"")+'</td>'+
-      '<td>'+esc(t["事项"]||"")+'</td><td>'+tag(t["风险等级"])+'</td>'+
-      '<td>'+(EDIT?'<span class="row-ops"><button class="btn todo-edit" onclick="editTodo('+t._i+')" title="编辑这条待办">✎ 编辑</button>'+
-        '<button class="btn todo-del" onclick="delTodo('+t._i+')" title="删除这条待办">✕ 删除</button></span>':'')+'</td></tr>').join("")+'</table>';
-  el.innerHTML=head+auto+table+pgBar("ov-risk",open.length,"条",10);
+/* ---------- 自动检测区：挂在待办清单下方 ----------
+   每行可「＋ 加入待办」写入表格，或「✕ 删除」= 忽略（本机记住，不再提示）。 */
+const IGN_KEY="wb_ignored_issues";
+function issueKey(it){return String(it.dom||"")+"|"+String(it.item||"")}
+function ignoredSet(){
+  try{return new Set(JSON.parse(localStorage.getItem(IGN_KEY)||"[]")||[])}catch(e){return new Set()}
 }
-PG_DRAW["ov-risk"]=()=>renderOvRisk();
-renderOvRisk();
-
-const PHOTO=DATA.photos||{},THUMBS=new Set(DATA.thumbs||[]);
-function hasPhotoOf(sid){return THUMBS.has(sid)||!!PHOTO[sid]}
-function anyPhoto(){return Object.keys(PHOTO).length>0||THUMBS.size>0}
+function saveIgnored(set){
+  try{localStorage.setItem(IGN_KEY,JSON.stringify([...set]))}catch(e){}
+}
+function ignoreIssue(i){
+  const it=AUTO_ISSUES[i];if(!it)return;
+  const s=ignoredSet();s.add(issueKey(it));saveIgnored(s);
+  renderTodoCard();
+  showToast("已忽略这条检测项，不再提示");
+}
+function restoreIgnored(){
+  saveIgnored(new Set());renderTodoCard();
+  showToast("已恢复全部被忽略的检测项");
+}
+function renderAutoBlock(){
+  const iss=detectIssues(),ign=ignoredSet();
+  const pend=iss.filter(it=>!it.inTodo&&!ign.has(issueKey(it)));
+  const hidden=iss.filter(it=>!it.inTodo&&ign.has(issueKey(it))).length;
+  const title='<div class="auto-title">自动检测 · 按当前数据发现、还没进待办的问题'+
+    (hidden?'<span class="ai-restore" onclick="restoreIgnored()">已忽略 '+hidden+' 项 · 恢复</span>':'')+'</div>';
+  if(!pend.length){
+    return '<div class="auto-wrap">'+title+
+      '<div class="auto-ok">✓ 没有新的自动检测项'+(iss.length?'（检测到的 '+iss.length+' 项都已在待办表中）':'')+'</div></div>';
+  }
+  const rows=pend.map(it=>{
+    const i=iss.indexOf(it);
+    return '<div class="auto-row"><span class="ai-badge">自动</span><span class="ai-dom">'+esc(it.dom)+'</span>'+
+      '<span class="ai-obj">'+esc(it.obj)+'</span><span class="ai-item">'+esc(it.item)+'</span>'+
+      '<span class="ai-lv">'+tag(it.lv)+'</span>'+
+      '<span class="ai-ops">'+
+      (EDIT?'<button class="btn ai-add" onclick="adoptIssue('+i+')">＋ 加入待办</button>':'')+
+      '<button class="btn ai-del" onclick="ignoreIssue('+i+')" title="忽略这条检测项">✕ 删除</button></span></div>';
+  }).join("");
+  return '<div class="auto-wrap">'+title+rows+'</div>';
+}
+/* 首次渲染放在自动检测/照片索引定义之后，避免依赖未初始化 */
+renderTodoCard();
 
 /* ---------- Grad ---------- */
 kpi("#kpi-grad",[
@@ -1292,7 +1313,6 @@ kpi("#kpi-grad",[
  {v:cnt(S,x=>x["去向确认状态"]==="已确认"),l:"去向已确认",c:"g",on:()=>S.filter(x=>x["去向确认状态"]==="已确认")},
  {v:stuRisk.length,l:"风险预警",c:"r",on:()=>stuRisk},
  {v:cnt(S,x=>Object.values(x).some(v=>v==="缺失")),l:"材料缺失",c:"r",ext:{key:"_note",label:"缺失材料"},on:()=>S.filter(x=>Object.values(x).some(v=>v==="缺失")).map(x=>(x._note=Object.keys(x).filter(k=>x[k]==="缺失").join("、"),x))},
- {v:S.filter(x=>hasPhotoOf(x["学号"])).length+" / "+S.length,l:"证件照覆盖",c:"b",ext:{key:"_note",label:"说明"},on:()=>S.filter(x=>!hasPhotoOf(x["学号"])).map(x=>(x._note="未上传证件照",x))},
 ]);
 /* 「就业意向分布」面板与「毕业意向(问卷)」字段已按需求全部移除 */
 /*bars("#gi-bars",...) 已随面板移除*/
@@ -1636,9 +1656,9 @@ let AC_PLAN_MJ=null;
 const AC_FOLD={};                                 // 折叠状态：「专业||类别key」-> true(收起)/false(展开)
 const AC_PLAN_SKIP=["文化素质类-计科","四史类"];   // 这两类不展开（自由选课，课程池几百门）
 function setAcPlanMajor(m){AC_PLAN_MJ=m;renderAcPlans()}
-function acGuessCat(nm){  // 方案里没人修过的课，按课程名兜底归口
+function acGuessCat(nm){  // 方案归口缺失时的最后兜底（正常都以方案自带归口为准）
   if(/毕业设计|毕业论文|毕业实习/.test(nm||""))return "专业必修";
-  return /英语|外语|日语|法语|德语|俄语|西班牙语|葡萄牙语|阿拉伯语/.test(nm||"")?"通识限选 > 外语拓展课组I类":"其他";
+  return "其他";
 }
 function acFoldKey(k){return (AC_PLAN_MJ||"")+"||"+k}
 function acIsFolded(k,depth){const v=AC_FOLD[acFoldKey(k)];return v===undefined?true:v}  // 默认全部折叠
@@ -1659,7 +1679,7 @@ function acCatRows(rows,depth){
   if(!rows.length)return "";
   rows.sort((a,b)=>String(a.t).localeCompare(String(b.t))||String(a.n).localeCompare(String(b.n)));
   return '<table class="plan-tbl" style="margin-left:'+((depth-1)*20)+'px"><tr><th>课程名[课程号]</th><th style="width:64px">学分</th><th style="width:180px">计划学年学期</th><th style="width:76px">课程性质</th><th style="width:104px">同专业修读率</th></tr>'+
-    rows.map(r=>'<tr><td>'+esc(r.n)+' <span class="small" style="color:var(--sub)">['+esc(r.code)+']</span></td><td>'+r.c+
+    rows.map(r=>'<tr><td>'+esc(r.n)+' <span class="small" style="color:var(--sub)">['+esc(r.code)+']</span></td><td>'+(r.c||"—")+
       '</td><td class="small">'+esc(r.t||"—")+'</td><td class="small">'+esc(r.k||"—")+'</td><td class="small">'+(r.pop?r.pop+'%':'—')+'</td></tr>').join("")+
     '</table>';
 }
@@ -1687,18 +1707,18 @@ function renderAcPlans(){
   }
   if(!AC_PLAN_MJ||!ACPL[AC_PLAN_MJ])AC_PLAN_MJ=majors[0];
   if(mbox)mbox.innerHTML=majors.map(m=>'<span class="seg'+(m===AC_PLAN_MJ?" active":"")+'" onclick="setAcPlanMajor(\''+esc(m)+'\')">'+esc(m)+'</span>').join("");
-  const p=ACPL[AC_PLAN_MJ]||{},codes=p.codes||{};
+  const p=ACPL[AC_PLAN_MJ]||{},codes=p.codes||{},pc=p.courses||{};
   const cats=(p.cats||[]).slice();
   const stat=(ANAPC[AC_PLAN_MJ])||{};
   const total=cats.filter(c=>(c.path||[]).length===1).reduce((a,c)=>a+(c.req||0),0);
   const mt=$("#ac-plan-meta");
-  if(mt)mt.textContent="顶级类别要求合计 "+total+" 学分 ｜ 方案内课程 "+Object.keys(codes).length+" 门 ｜ 不含文化素质、四史类";
+  if(mt)mt.textContent="顶级类别要求合计 "+total+" 学分 ｜ 方案内课程 "+Object.keys(codes).length+" 门";
   const byCat={};
   Object.keys(codes).forEach(code=>{
-    const st=stat[code]||{};
+    const st=stat[code]||{},pd=pc[code]||{};
     const nm=codes[code]||st.n||"";
-    const key=st.cat||acGuessCat(nm);
-    (byCat[key]=byCat[key]||[]).push({code:code,n:nm,c:st.c||0,t:st.t||"",k:st.k||"",pop:st.pop||0});
+    const key=st.cat||pd.cat||acGuessCat(nm);   // 归口优先：成绩实测 > 方案自带 > 兜底
+    (byCat[key]=byCat[key]||[]).push({code:code,n:nm,c:st.c||pd.c||0,t:st.t||pd.t||"",k:st.k||pd.k||"",pop:st.pop||0});
   });
   const inPlan=k=>cats.some(c=>c.key===k);
   const skip=k=>AC_PLAN_SKIP.some(x=>k===x||k.split(" > ").indexOf(x)>=0);
@@ -1744,7 +1764,7 @@ function acImportModal(kind){
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(isPlan?"导入培养方案":"导入全校成绩")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">'+(isPlan?
       '上传「2023级xx主修培养方案--方案内表现课程信息.xlsx」类型的文件（文件名需含“xx主修培养方案”），系统自动识别专业、解析类别学分要求与方案内课程，同名专业自动覆盖更新，人工调整过的学分要求会保留。':
-      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格）、应修未修（按培养方案课组：学分没修满的课组，列出还需补修的课程）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期视为在修，不计入挂科与学分。')+'</div>'+
+      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格，方案内已挂课程全部列出）、应修未修（逐门核对培养方案里列出的课程：没修 / 没通过就点名；文化素质类与学科交叉课组只核对学分缺口）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期成绩还没出的算在修，已出分且不及格的按挂科计。')+'</div>'+
     '<div class="drop" id="ac-drop"><div class="dz-t">把 xlsx 文件拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'ac-file\')">选择文件…</button>'+
       '<div class="dz-s">仅支持 .xlsx</div></div>'+
