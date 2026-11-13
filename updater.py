@@ -208,11 +208,16 @@ def install_async(url, name="setup.exe"):
             # 让出锁：本进程稍后退出，安装程序接管文件替换。
             # 用 DETACHED_PROCESS 启动，安装包不挂在主程序的进程组里
             # （安装脚本会 taskkill 掉「辅导员工作台.exe」，挂在一起容易被连带结束）。
+            # 装到哪个目录交给安装脚本自己决定（固定为 %LOCALAPPDATA%\Programs\辅导员工作台，
+            # 且 UsePreviousAppDir=no）；这里不传 /DIR，避免把“当前运行的目录”当成安装目标——
+            # 程序万一跑在临时目录里，就会一直更新到临时目录去，版本永远不变。
+            # /LOG 留一份安装日志，下次再出问题可以直接看。
+            logf = os.path.join(os.path.dirname(dest), "install.log")
+            args = [dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART", "/LOG=" + logf]
             flags = 0
             if os.name == "nt":
                 flags = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-            subprocess.Popen([dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART"],
-                             close_fds=True, creationflags=flags)
+            subprocess.Popen(args, close_fds=True, creationflags=flags)
             JOB["state"] = "done"
             threading.Timer(2.5, lambda: os._exit(0)).start()
         except Exception as e:

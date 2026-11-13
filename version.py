@@ -8,4 +8,4 @@
   - updater.py 用它和 GitHub 上最新 release 的 tag 比对
 """
 
-VERSION = "2.1.13"
+VERSION = "2.1.14"

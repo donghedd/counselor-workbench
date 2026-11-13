@@ -31,6 +31,13 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 
+; 一律装到上面的固定位置，**不复用上次安装目录**。
+; 原因：Inno 会把上次的安装路径记在注册表（同一 AppId 共用一条卸载记录），
+; 应用内「检查更新」时安装包是静默启动的、没人选目录，于是新版本会被装到
+; 上次那个目录里。如果上次装在了临时目录（比如测试安装），更新就会一直
+; “装成功”，但桌面/开始菜单指向的还是老目录，版本永远不变。
+UsePreviousAppDir=no
+
 OutputDir=..\dist
 OutputBaseFilename={#AppName}-v{#AppVersion}-安装版
 SetupIconFile=assets\app.ico
@@ -94,7 +101,7 @@ Type: filesandordirs; Name: "{app}\__pycache__"
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Comment: "打开辅导员工作台"
 Name: "{autoprograms}\{#AppName} 使用说明"; Filename: "{app}\使用说明.md"; WorkingDir: "{app}"
 Name: "{autoprograms}\卸载 {#AppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Check: WantDesktopIcon
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\__pycache__"
@@ -160,6 +167,17 @@ end;
 function NotSilentInstall(): Boolean;
 begin
   Result := not WizardSilent();
+end;
+
+{ 桌面快捷方式要不要建。
+  不能只写 Tasks: desktopicon：那样只有「首次安装」勾选过才建，
+  升级时任务不再勾选，旧快捷方式就一直指向老目录（换过安装路径就会指错）。
+  这里改成：勾了任务就建；或者桌面上已经有快捷方式（说明用户想留着），也重建一遍指向当前目录。
+  静默升级时正好走第二条，顺手把指错的快捷方式纠正回来。 }
+function WantDesktopIcon(): Boolean;
+begin
+  Result := WizardIsTaskSelected('desktopicon') or
+            FileExists(ExpandConstant('{autodesktop}\{#AppName}.lnk'));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
