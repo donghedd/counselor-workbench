@@ -135,19 +135,34 @@ RE_TERM_ANY = re.compile(r"^\d{4}-\d{4}学年\s*[春秋]季学期")
 RE_NUM = re.compile(r"^\d+(?:\.\d+)?$")
 
 
+def _col_idx(letter):
+    n = 0
+    for ch in letter:
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+
 def _plan_scan(data):
-    """按教务导出表的视觉顺序还原「组头 → 课程行」结构。
+    """解析方案表：课组层级 + 课程归口 + 学分/计划学期/课程性质。
 
-    导出表的共享字符串按首次出现顺序排列，等价于「从上到下、从左到右」：
+    教务导出的这份 xlsx 有两个特点，必须分开处理：
 
-        (多选4)通识限选#g（要求学分：17.0…）g#/(多选2)体育类-限选#g…g#/体育专项#g…g#   ← 组头（完整层级）
-          /(多选2)体育类-限选   （要求学分：3.0 已修学分：3.0）                            ← 组头行的面包屑
-        课程名[课程号] / 是否通过 / 成绩 / 学分 / 计划学年学期 / 课程性质 …              ← 表头
-        体育专项1[2223001005]  通过  92.0  0.5  2024-2025学年 秋季学期  必修  初修         ← 课程行
-        体育专项2[2223002010]  97.0  1.0  2024-2025学年 春季学期                        ← 下一门课
+    一、**组头编码串（`(多选4)通识限选#g（要求学分：17.0）g#/…`）是「孤儿字符串」**
+        —— 它们留在 sharedStrings 里，但已没有任何单元格引用（导出工具隐藏了这些行）。
+        所以课组层级和「课程归哪个组」只能按 sharedStrings 的出现顺序还原：
+        一串组头后面跟着的课程就属于该组，组头用 / 分隔的每一段入树（父 > 子 > 孙）。
 
-    因此「组头之后、下一个组头之前的课程」就属于该组（挂到最深层子课组），
-    组头行可能有多级（父 > 子 > 孙），一行里用 / 分隔的每一段都要入树。
+    二、**课程与字段是「多块粘贴拼图」**：每个课组块占一组列，块与块在行方向错位，
+        同一个 Excel 行里常常并排着两三个不同块，列位置没有全局含义。但同一列内
+        的顺序是稳定的：
+
+            A78  中国文化概论(英文)[2314602020]   ← 课程
+            A79  2025-2026学年 秋季学期,…         ← 该课的选课/计划学期
+            A80  中国经典英译赏析[2323001020]      ← 下一门课
+            …
+            A88  4.0                               ← 上一门课的学分
+
+        所以字段按「列流」取：列内顺序配对，本列缺的再用同一个 Excel 行兜底。
 
     返回 (tree, cg, courses)：
       tree     {层级元组: 要求学分}
@@ -155,14 +170,19 @@ def _plan_scan(data):
       courses  {课号: {n 课程名, c 学分, t 计划学年学期, k 课程性质, cat 归口课组}}
     """
     z = zipfile.ZipFile(io.BytesIO(data))
-    ss = re.findall(r"<t[^>]*>([^<]*)</t>", z.read("xl/sharedStrings.xml").decode("utf-8"))
+    names = z.namelist()
+    sheet = next((n for n in names if re.match(r"xl/worksheets/sheet\d+\.xml$", n)), None)
+    root = ET.fromstring(z.read(sheet))
+    strings = []
+    if "xl/sharedStrings.xml" in names:
+        sroot = ET.fromstring(z.read("xl/sharedStrings.xml"))
+        for si in sroot.iter(M + "si"):
+            strings.append("".join((t.text or "") for t in si.iter(M + "t")))
+
     tree, cg, courses = {}, {}, {}
     cur = None      # 当前课组 key（组头里的最深层）
     crumbs = []     # 面包屑栈 [(名, 要求学分)]
-    win = None      # 当前课程行的字段窗口
-    # 组头编码串自带完整层级时，面包屑碎片只是同一行的视觉重复，不必再入树
-    # （碎片没有父级信息，混进去会把「父 > 子 > 孙」串成「子 > 父 > 子」）
-    has_chain = any(GROUP_OPEN.search(s) for s in ss)
+    has_chain = any(GROUP_OPEN.search(x) for x in strings)
 
     def put(path):
         for i in range(1, len(path) + 1):
@@ -173,42 +193,24 @@ def _plan_scan(data):
             else:
                 tree[k] = max(tree.get(k, 0.0), r)
 
-    def close():
-        nonlocal win
-        if win is None:
-            return
-        d = courses.get(win["code"])
-        if d is not None:
-            nums = [n for n in win["nums"] if 0 < n <= 10]   # 学分列；成绩（92.0 等）>10 排除
-            if nums and not d["c"]:
-                d["c"] = round(min(nums), 2)
-            if win["terms"] and not d["t"]:
-                d["t"] = max(win["terms"], key=len)          # 多学期串取最完整的一条
-            if win["nats"] and not d["k"]:
-                d["k"] = win["nats"][0]
-        win = None
-
-    for raw in ss:
+    # ---------- 第一段：sharedStrings 顺序 → 课组树 + 课程归口 ----------
+    for raw in strings:
         t = raw.strip()
         if not t:
             continue
-        # ① 组头编码串：带 #g/#r 标记与各级「要求学分」，是最权威的层级来源
         if GROUP_OPEN.search(raw):
             seg = parse_path(raw)
             if seg:
-                close()
                 crumbs = [[n, r] for n, r in seg]
                 put(seg)
                 cur = " > ".join(n for n, _ in seg)
-                continue
-        # ② 组头行的面包屑碎片：  /子类  +  （要求学分：X 已修学分：Y）
-        #   仅在文件里没有任何组头编码串（老版导出格式）时才作为层级来源
+            continue
+        # 老版导出格式（无编码串）才用面包屑碎片建层级
         if not has_chain and t.startswith("/"):
-            close()
             nm = _strip_multi(t.lstrip("/").strip())
             if nm:
                 idx = None
-                for i in range(len(crumbs) - 1, -1, -1):   # 与栈内同名层对齐，避免层层叠加
+                for i in range(len(crumbs) - 1, -1, -1):
                     if crumbs[i][0] == nm:
                         idx = i
                         break
@@ -226,14 +228,10 @@ def _plan_scan(data):
                 crumbs[-1][1] = float(m.group(1))
                 put([(n, r) for n, r in crumbs if n])
             continue
-        # ③ 表头文字：出现在课程行之前，用来关闭上一门课的字段窗口
         if t in SCAFFOLD:
-            close()
             continue
-        # ④ 课程行：课程名[课号]
         m = RE_COURSE.match(t)
         if m:
-            close()
             code = m.group(1)
             nm = re.sub(r"\[\d{6,}\]$", "", t).strip()
             d = courses.setdefault(code, {"n": nm, "c": 0.0, "t": "", "k": "", "cat": ""})
@@ -245,21 +243,116 @@ def _plan_scan(data):
                     lst.append(cur)
                 if not d["cat"]:
                     d["cat"] = cur
-            win = {"code": code, "nums": [], "terms": [], "nats": []}
+
+    # ---------- 第二段：单元格网格 → 学分 / 计划学期 / 课程性质 ----------
+    def cval(c):
+        if c.get("t") == "s":
+            v = c.find(M + "v")
+            try:
+                return strings[int(v.text)] if v is not None else ""
+            except Exception:
+                return ""
+        if c.get("t") == "inlineStr":
+            return "".join((t.text or "") for t in c.iter(M + "t"))
+        v = c.find(M + "v")
+        return (v.text or "") if v is not None else ""
+
+    cells = []
+    for c in root.iter(M + "c"):
+        ref = c.get("r") or ""
+        m = re.match(r"([A-Z]+)(\d+)$", ref)
+        if not m:
             continue
-        # ⑤ 课程行后面的字段：计划学年学期 / 课程性质 / 学分
-        if win is not None:
-            if RE_TERM_ANY.match(t):
-                win["terms"].append(t)
+        t = (cval(c) or "").strip()
+        if not t:
+            continue
+        cells.append((int(m.group(2)), _col_idx(m.group(1)), t))
+    cells.sort(key=lambda x: (x[0], x[1]))
+
+    # 「替代课程名[课程号]」那一列装的是被替代的课，不是方案课程本身
+    alt_cols = {ci for (_r, ci, t) in cells if t == "替代课程名[课程号]"}
+    byrow = {}
+    for cell in cells:
+        byrow.setdefault(cell[0], []).append(cell)
+    wins = {}
+
+    def row_fields(ci, r):
+        """同一个 Excel 行（以及上下各一行）里其它单元格的字段。
+
+        多块粘贴会把一张卡片的「值」挤到相邻行/相邻列，所以性质在 ±1 行内找；
+        学分和学期仍只用同一行——跨行的数字极易是隔壁卡片的成绩。
+        """
+        acc = {"rnums": [], "rterms": [], "rnats": []}
+        for rr in (r, r - 1, r + 1):
+            for (_r2, ci2, t2) in byrow.get(rr, []):
+                if _r2 == r and ci2 == ci:
+                    continue
+                if GROUP_OPEN.search(t2) or RE_COURSE.match(t2):
+                    continue
+                if t2 in SCAFFOLD or t2.startswith("（要求学分") or t2.startswith("/"):
+                    continue
+                if t2 in NATURE_SET:          # 先认性质：STOPWORDS 里也含这些词
+                    acc["rnats"].append(t2)
+                    continue
+                if t2 in STOPWORDS:
+                    continue
+                if _r2 != r:
+                    continue
+                elif RE_TERM_ANY.match(t2):
+                    acc["rterms"].append(t2)
+                elif RE_NUM.match(t2) and 0 < float(t2) <= 12:
+                    acc["rnums"].append(float(t2))
+        return acc
+
+    def settle(ci):
+        w = wins.pop(ci, None)
+        if not w:
+            return
+        d = courses.get(w["code"])
+        if d is None:
+            return
+        if not d["c"]:
+            nums = w["nums"] or w["rnums"]
+            if nums:
+                d["c"] = round(min(nums), 2)
+        if not d["t"]:
+            # 同一行常有「选课学年学期 / 成绩学年学期 / 计划学年学期」三列，
+            # 计划列在最后；方案要的是计划学期，所以优先取行内最后一个。
+            terms = (w["rterms"][-1:] or w["terms"][:1])
+            if terms:
+                d["t"] = terms[0].split(",")[0].strip()
+        if not d["k"]:
+            nats = w["nats"] or w["rnats"]
+            if nats:
+                d["k"] = nats[0]
+
+    for (r, ci, t) in cells:
+        if GROUP_OPEN.search(t):
+            settle(ci)
+            continue
+        if t.startswith("（要求学分") or t.startswith("/"):
+            settle(ci)
+            continue
+        if t in SCAFFOLD:
+            continue
+        m = RE_COURSE.match(t)
+        if m:
+            settle(ci)
+            if ci in alt_cols:
                 continue
-            if t in NATURE_SET:
-                win["nats"].append(t)
-                continue
-            if RE_NUM.match(t):
-                win["nums"].append(float(t))
-                continue
-        # ⑥ 其余（通过 / 未修读 / 优秀 / 初修 / 重修 …）忽略
-    close()
+            wins[ci] = dict(code=m.group(1), nums=[], terms=[], nats=[], **row_fields(ci, r))
+            continue
+        w = wins.get(ci)
+        if w is None:
+            continue
+        if RE_TERM_ANY.match(t):
+            w["terms"].append(t)
+        elif t in NATURE_SET:
+            w["nats"].append(t)
+        elif RE_NUM.match(t) and 0 < float(t) <= 12:
+            w["nums"].append(float(t))
+    for ci in list(wins):
+        settle(ci)
     return tree, cg, courses
 
 
@@ -286,11 +379,58 @@ def parse_plan(fname, data):
     return {"major": major, "year": year, "cats": cats, "codes": codes,
             "courses": courses, "cgroups": cg, "source": os.path.basename(fname)}
 
+def _migrate_plan(p):
+    """旧版导入的培养方案没有 courses（课程明细）字段：从 codes + cgroups 重建，
+    学分/计划学期/课程性质从成绩分析的 planCourses 补，避免升级后要重新导入。
+
+    归口取「cgroups 里存在且属于本方案 cats 的最长路径」——旧 cgroups 与成绩归口
+    都可能有噪声（替代关系误判等），cat 必须能对上方案自己的课组树才可信。
+    """
+    if p.get("courses") or not p.get("codes"):
+        return p
+    keys = {c["key"] for c in p.get("cats") or []}
+    cg = p.get("cgroups") or {}
+    pc = {}
+    try:
+        with open(ANALYSIS_FILE, encoding="utf-8") as f:
+            pc = (json.load(f).get("planCourses") or {}).get(p.get("major") or "", {})
+    except Exception:
+        pass
+    courses = {}
+    for code, nm in p["codes"].items():
+        ref = pc.get(code) or {}
+        cand = [g for g in cg.get(code) or [] if g in keys]
+        cand.sort(key=len, reverse=True)
+        cat = cand[0] if cand else (ref.get("cat") if ref.get("cat") in keys else "")
+        courses[code] = {
+            "n": ref.get("n") or nm,
+            "c": ref.get("c") or 0.0,
+            "t": ref.get("t") or "",
+            "k": ref.get("k") or "",
+            "cat": cat,
+        }
+    p["courses"] = courses
+    p["_migrated"] = True
+    return p
+
+
 def load_plans():
     if not os.path.exists(PLAN_FILE):
         return {"majors": {}}
     with open(PLAN_FILE, encoding="utf-8") as f:
-        return json.load(f)
+        d = json.load(f)
+    changed = False
+    for mj, p in (d.get("majors") or {}).items():
+        if not p.get("courses"):
+            _migrate_plan(p)
+            if p.get("_migrated"):
+                p.pop("_migrated", None)
+                changed = True
+    if changed:
+        os.makedirs(DATA, exist_ok=True)
+        with open(PLAN_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+    return d
 
 
 def save_plan(fname, data):
@@ -717,7 +857,15 @@ def analyze_grades(fname, data):
             # 计划学期：培养方案自带的「计划学年学期」是教务数据，最权威；
             # 方案没给时才用同专业同学的实际修读学期众数推断，
             # 且只有"多数同届人都修过"的课，众数才可信（否则视为开课时间未知）。
+            #
+            # 注意：方案里的学年是「方案那一届」的绝对学年（2023 级方案的
+            # 第一学期写 2023-2024 秋），而同一份方案会被 2021~2024 各届学生共用。
+            # 所以必须先换算成「第几学年」的相对偏移，再加上该生自己的入学年，
+            # 否则 2024 级学生会把方案里"更早的学年"当成已完成，未来课也会被点名。
             tk = _plan_term_of((plan.get("courses") or {}).get(code, {}).get("t"))
+            # 方案自带的计划学期是绝对学年，直接用：留级/休学/跨届学生目前一律
+            # 按方案那一级算（用户约定），不做入学年换算，避免把新方案才有的课
+            # 当成"早就该修却没修"整届误报。
             if tk is not None:
                 return tk
             if pop.get((major, code), 0) < min_pop:
