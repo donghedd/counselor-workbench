@@ -269,6 +269,26 @@ nav .tab.active + .subnav{display:flex}
 .pill-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
 .pill-2 .room-card{margin-bottom:0}
 @media(max-width:900px){.pill-2{grid-template-columns:1fr}}
+/* ---------- 版本更新 / 成绩跟进 ---------- */
+.btn.danger{color:var(--red);border-color:#f0c9c9;background:#fff}
+.btn.danger:hover{background:#fdf2f2;border-color:#e8b4b4}
+.upd-bar{position:sticky;top:54px;z-index:40;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-bottom:14px;padding:9px 14px;border:1px solid #cfe0ff;border-radius:10px;
+  background:linear-gradient(90deg,#f2f7ff,#f8fbff);font-size:13px;color:#1e3a8a;box-shadow:var(--sh1)}
+.upd-bar b{font-weight:700}
+.upd-bar .upd-notes{color:#5b6b86;font-size:12px;max-width:460px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upd-bar .sp{margin-left:auto;display:flex;gap:8px;align-items:center}
+.sf-link{color:var(--blue);cursor:pointer;text-decoration:none;font-weight:500}
+.sf-link:hover{text-decoration:underline}
+.fp-tbl{width:100%;font-size:12.5px}
+.fp-tbl th{font-size:11.5px;padding:6px 6px}
+.fp-tbl td{padding:6px 6px;border-bottom:1px solid #eef1f6;vertical-align:middle;white-space:normal}
+.fp-tbl input[type=text],.fp-tbl select{padding:4px 7px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:#fff}
+.fp-tbl input.sc{width:74px}
+.fp-tbl select.wy{width:82px}
+.fp-tbl + .fp-tbl{margin-top:8px}
+.fp-done td{background:#f5fbf7}
+@media(max-width:900px){.upd-bar .upd-notes{display:none}}
 </style>
 </head>
 <body>
@@ -320,6 +340,8 @@ nav .tab.active + .subnav{display:flex}
   </div>
   <div class="side-foot">
     <div class="sf-t"><span class="sf-dot ro" id="sf-dot"></span><span id="sf-mode">只读模式</span></div>
+    <div class="sf-t" style="margin-top:4px;font-weight:400"><span id="app-ver">v—</span>
+      <span style="color:#d5dbe6">·</span><a class="sf-link" id="upd-link" onclick="checkUpdate(true)">检查更新</a></div>
     <div class="sf-txt">数据来源 data/*.csv<br>本地文件，请勿外传</div>
   </div>
 </aside>
@@ -335,6 +357,7 @@ nav .tab.active + .subnav{display:flex}
   </div>
 </header>
 <main>
+<div class="upd-bar" id="upd-bar" style="display:none"></div>
   <!-- ============ 全局总览 ============ -->
   <section class="page active" id="p-overview">
     <div class="cards" id="kpi-overview"></div>
@@ -433,7 +456,10 @@ nav .tab.active + .subnav{display:flex}
                 <b>培养方案</b><span class="small" id="ac-plan-meta"></span>
                 <span class="small" id="ac-fold-btns" style="margin-left:auto"><a href="javascript:void(0)" onclick="acFoldAll(false)" style="color:var(--blue)">全部展开</a> <span style="color:var(--line)">|</span> <a href="javascript:void(0)" onclick="acFoldAll(true)" style="color:var(--blue)">全部收起</a></span>
                 <div class="seg-group" id="ac-plan-majors"></div>
+                <span style="display:flex;gap:8px;align-items:center">
                 <button class="btn" id="ac-plan-import2" style="display:none" onclick="acImportModal('plan')">导入培养方案</button>
+                <button class="btn danger" id="ac-plan-del" style="display:none" onclick="acPlanDel()">删除当前专业方案</button>
+                </span>
               </div>
               <div id="ac-plans"></div>
             </div>
@@ -902,7 +928,7 @@ if($("#bn-ac"))$("#bn-ac").textContent=acWarnStudents.size||"—";
 let acTypeF="",acClassF="";
 function acRows(){
   const rows=[];
-  Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)rows.push({sid:sid,name:p.name||nameOfSid(sid),cls:p.class||(S.find(x=>x["学号"]===sid)||{})["班级"]||"",year:p.year,earned:p.earned,fn:(p.failed||[]).length,mn:(p.missing||[]).length,ue:(p.unearned?(((p.unearned.g||[]).length)+((p.unearned.c||[]).length)):((p.failed||[]).length+(p.missing||[]).length)),type:p.warn.type,note:p.warn.note||"",src:"自动",id:""})});
+  Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)rows.push({sid:sid,name:p.name||nameOfSid(sid),cls:p.class||(S.find(x=>x["学号"]===sid)||{})["班级"]||"",year:p.year,earned:p.earned,fn:(p.failed||[]).length,mn:(p.missing||[]).length,ue:(p.unearned?(((p.unearned.g||[]).length)+((p.unearned.c||[]).length)):((p.failed||[]).length+(p.missing||[]).length)),type:p.warn.type,note:p.warn.note||"",src:"自动",id:"",fixN:(p.fix||[]).length})});
   ACWARN.forEach(r=>rows.push({sid:r["学号"],name:r["姓名"]||nameOfSid(r["学号"]),cls:(S.find(x=>x["学号"]===r["学号"])||{})["班级"]||"",year:"",earned:"",fn:"",mn:"",type:r["警示类型"]||"学业警示",note:(r["级别"]?"["+r["级别"]+"] ":"")+(r["原因"]||"")+(r["学期"]?"（"+r["学期"]+"）":""),src:"手动",id:r["记录ID"]}));
   return rows.filter(r=>(!acTypeF||r.type===acTypeF||(acTypeF==="手动登记"&&r.src==="手动"))&&(!acClassF||r.cls===acClassF))
     .sort((a,b)=>(b.fn||0)-(a.fn||0)||String(a.sid).localeCompare(String(b.sid)));
@@ -939,13 +965,14 @@ function renderAcademic(){
 function acWarnTable(){
   const rows=acRows();
   $("#ac-warn-table").innerHTML=rows.length?
-    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>未获学分科目</th><th>警示类型</th><th>说明</th><th>来源</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
+    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>未获学分科目</th><th>警示类型</th><th>说明</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
     rows.map(r=>'<tr onclick="stuDetail(\''+r.sid+'\')" style="cursor:pointer">'+
       '<td>'+esc(r.sid)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.cls)+'</td><td>'+(r.earned!==""?r.earned:"—")+'</td>'+
       '<td>'+(r.ue!==""&&r.ue!==undefined?(r.ue>0?'<span class="tag tr">'+r.ue+' 项</span>':'<span class="tag tg">0</span>'):"—")+'</td>'+
-      '<td>'+(r.type==="毕业警示"||r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+'</td>'+
-      '<td class="small">'+esc(r.note||"—")+'</td><td>'+esc(r.src)+'</td>'+
-      (EDIT&&r.id?'<td><button class="btn" onclick="event.stopPropagation();acWarnModal(\''+r.sid+'\',\''+r.id+'\')">编辑</button> <button class="btn danger" onclick="event.stopPropagation();acWarnDel(\''+r.id+'\',\''+esc(r.name)+'\')">删除</button></td>':EDIT?'<td></td>':'')+
+      '<td>'+(r.type==="毕业警示"||r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
+      '<td class="small" style="white-space:normal;max-width:330px">'+esc(r.note||"—")+(r.fixN?' <span class="tag tg" title="已登记补考/重修结果">已跟进 '+r.fixN+'</span>':'')+'</td>'+
+      (EDIT?'<td>'+(r.src==="自动"&&ASTU[r.sid]?'<button class="btn" onclick="event.stopPropagation();acFollowModal(\''+r.sid+'\')">成绩跟进</button>':'')+
+        (r.id?' <button class="btn" onclick="event.stopPropagation();acWarnModal(\''+r.sid+'\',\''+r.id+'\')">编辑</button> <button class="btn danger" onclick="event.stopPropagation();acWarnDel(\''+r.id+'\',\''+esc(r.name)+'\')">删除</button>':'')+'</td>':'')+
     '</tr>').join("")+'</table>'
     :'<div class="empty">'+(anaHasData()?"当前筛选条件下没有警示记录":"尚未导入成绩：编辑模式下点「导入成绩」上传「全校成绩查询」文件")+'</div>';
 }
@@ -995,6 +1022,7 @@ function acCatSec(key,depth,req,rows,body,extra){
 function renderAcPlans(){
   const box=$("#ac-plans");if(!box)return;
   const majors=Object.keys(ACPL);
+  const delBtn=$("#ac-plan-del");if(delBtn)delBtn.style.display=(EDIT&&majors.length)?"inline-block":"none";
   const mbox=$("#ac-plan-majors");
   if(!majors.length){
     if(mbox)mbox.innerHTML="";
@@ -1084,6 +1112,7 @@ function bindAcDrop(kind){
   });
 }
 async function doAcademicImport(inp,kind){
+  const isPlan=kind==="plan";
   const f=(inp.files||[])[0];if(inp.value)inp.value="";
   if(!f)return;
   const log=$("#ac-log");if(log)log.innerHTML='<div class="small" style="margin-top:12px">正在解析 '+esc(f.name)+' …（成绩文件较大，请稍等）</div>';
@@ -1100,7 +1129,7 @@ async function doAcademicImport(inp,kind){
        '<div class="card r"><div class="num">'+j.failedStudents+'</div><div class="lbl">挂科学生</div></div>'+
        '<div class="card y"><div class="num">'+j.missingStudents+'</div><div class="lbl">有应修未修</div></div>'+
        '<div class="card r"><div class="num">'+j.warnStudents+'</div><div class="lbl">学业/毕业警示</div></div>';
-    if(log)log.innerHTML='<div class="cards" style="margin:12px 0 4px;grid-template-columns:repeat(3,minmax(0,1fr))">'+cards+'</div>'+
+    if(log)log.innerHTML='<div class="cards" style="margin:12px 0 4px;grid-template-columns:repeat('+(isPlan?3:2)+',minmax(0,1fr))">'+cards+'</div>'+
       (isPlan&&j.analyzed?'<div class="small" style="margin-top:6px">已按最新培养方案重算学业分析。</div>':'')+
       '<div class="small" style="margin-top:8px;color:var(--sub)">已写入 data/ 目录并重建看板。</div>'+
       '<div class="xls-row" style="margin-top:12px"><button class="btn primary" onclick="location.reload()">刷新查看</button><button class="btn" onclick="acImportModal(\''+kind+'\')">再导入一次</button></div>';
@@ -1718,6 +1747,181 @@ async function deleteStudent(sid,name){
     setTimeout(()=>location.reload(),700);
   }catch(e){showToast("删除失败（未连接本地服务？请用编辑模式打开）",true)}
 }
+/* ================= 版本更新 ================= */
+const APP_VER=DATA.version||"";
+if($("#app-ver"))$("#app-ver").textContent="v"+(APP_VER||"—");
+let UPD=null;
+function hideUpdBanner(){const b=$("#upd-bar");if(b){b.style.display="none";b.innerHTML=""}}
+function openRelease(){
+  const u=(UPD&&UPD.page)||"";
+  if(!u){showToast("该版本没有提供下载页",true);return}
+  window.open(u,"_blank");
+}
+async function checkUpdate(manual){
+  if(!EDIT){if(manual)showToast("请用编辑模式（双击 exe）打开后再检查更新",true);return}
+  const lk=$("#upd-link");if(lk&&manual)lk.textContent="检查中…";
+  try{
+    const r=await fetch("/api/update/check"+(manual?"?force=1":""));
+    const j=await r.json();
+    if(lk)lk.textContent="检查更新";
+    if(!j.ok){
+      if(j.code==="no_repo"){if(manual)repoModal();return}
+      if(manual)showToast(j.error||"检查更新失败",true);
+      return;
+    }
+    UPD=j;
+    if(j.hasUpdate)showUpdBanner(j);
+    else{hideUpdBanner();if(manual)showToast("已是最新版本 v"+j.current)}
+  }catch(e){
+    if(lk)lk.textContent="检查更新";
+    if(manual)showToast("检查更新失败：未连接本地服务",true);
+  }
+}
+function showUpdBanner(j){
+  const bar=$("#upd-bar");if(!bar)return;
+  const notes=String(j.notes||"").split("\n").map(s=>s.trim()).filter(Boolean)[0]||"";
+  bar.innerHTML='<span>发现新版本 <b>v'+esc(j.latest)+'</b></span>'+
+    '<span class="small" style="color:#5b6b86">当前 v'+esc(j.current)+'</span>'+
+    (notes?'<span class="upd-notes" title="'+esc(j.notes)+'">'+esc(notes)+'</span>':'')+
+    '<span class="sp"><button class="btn primary" onclick="doUpdate()">立即更新</button>'+
+    '<button class="btn" onclick="openRelease()">更新说明</button>'+
+    '<button class="btn" onclick="hideUpdBanner()">稍后</button></span>';
+  bar.style.display="flex";
+}
+async function doUpdate(){
+  if(!UPD||!UPD.asset){openRelease();return}
+  if(!confirm("将下载 v"+UPD.latest+" 安装包并覆盖安装。\n\n· 本程序会自动关闭，安装完成后从桌面图标重新打开\n· data / photos_src / 备份 目录不会被覆盖，学生数据保留\n\n继续更新？"))return;
+  const bar=$("#upd-bar");
+  bar.innerHTML='<span>正在下载 <b>v'+esc(UPD.latest)+'</b>…</span><span class="small" id="upd-pct">0%</span>'+
+    '<span class="sp"><span class="small" style="color:#5b6b86">下载期间请勿关闭窗口</span></span>';
+  try{
+    const r=await fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url:UPD.asset.url,name:UPD.asset.name||"setup.exe"})});
+    const j=await r.json();
+    if(!j.ok){showToast("启动更新失败："+(j.error||""),true);return}
+  }catch(e){showToast("启动更新失败：未连接本地服务",true);return}
+  const t=setInterval(async()=>{
+    try{
+      const r=await fetch("/api/update/progress");const j=await r.json();
+      const p=$("#upd-pct");if(p)p.textContent=(j.pct||0)+"%";
+      if(j.state==="error"){
+        clearInterval(t);showToast("更新失败："+(j.err||""),true);
+        setTimeout(()=>location.reload(),1500);
+      }else if(j.state==="done"){
+        clearInterval(t);
+        bar.innerHTML='<span>安装程序已启动，本窗口即将自动关闭…</span>';
+      }
+    }catch(e){clearInterval(t)}
+  },600);
+}
+function repoModal(){
+  const cur=(UPD&&UPD.repo)||"";
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>设置更新源</h3>'+
+    '<div class="small" style="margin:-2px 0 12px">填 GitHub 仓库（用户名/仓库名）。只填一次，之后「检查更新」会自动比对版本。</div>'+
+    '<div class="kv-form" style="grid-template-columns:1fr">'+
+      '<label>GitHub 仓库<input id="repo-in" placeholder="zhangsan/counselor-workbench" value="'+esc(cur)+'"></label>'+
+      '<label>访问令牌（仅私有仓库需要，可留空）<input id="repo-tk" placeholder="ghp_…"></label></div>'+
+    '<div class="xls-row" style="margin-top:14px"><button class="btn primary" onclick="saveRepo()">保存并检查</button>'+
+    '<button class="btn" onclick="closeModal()">取消</button></div>';
+  $("#mmask").style.display="block";
+}
+async function saveRepo(){
+  const repo=(($("#repo-in")||{}).value||"").trim(),tk=(($("#repo-tk")||{}).value||"").trim();
+  if(!/^[\w.-]+\/[\w.-]+$/.test(repo)){showToast("格式应为 用户名/仓库名",true);return}
+  try{
+    const r=await fetch("/api/update/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({repo:repo,token:tk})});
+    const j=await r.json();
+    if(!j.ok){showToast("保存失败："+(j.error||""),true);return}
+    closeModal();showToast("已保存更新源，正在检查…");
+    setTimeout(()=>checkUpdate(true),250);
+  }catch(e){showToast("保存失败：未连接本地服务",true)}
+}
+
+/* ================= 培养方案删除 ================= */
+async function acPlanDel(){
+  const m=AC_PLAN_MJ;if(!m)return;
+  const n=Object.keys(ASTU).filter(sid=>ASTU[sid].major===m).length;
+  if(!confirm("确定删除「"+m+"」的培养方案？\n\n· 该专业 "+n+" 名学生的学分缺口、未获科目分析会随之清空\n· 成绩文件不受影响，重新导入方案后可恢复\n\n此操作不可撤销。"))return;
+  try{
+    const r=await fetch("/api/academic/plan/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({major:m})});
+    const j=await r.json();
+    if(!j.ok){showToast("删除失败："+(j.error||"未知错误"),true);return}
+    showToast("已删除「"+j.major+"」的培养方案，正在刷新…");
+    setTimeout(()=>location.reload(),900);
+  }catch(e){showToast("删除失败：未连接本地服务",true)}
+}
+
+/* ================= 警示学生成绩跟进 ================= */
+const FOLLOW_WAYS=["补考","重修","免修","成绩认定","其他"];
+function acFollowModal(sid){
+  if(!needEdit())return;
+  const p=ASTU[sid]||{};
+  const stu=S.find(x=>x["学号"]===sid)||{};
+  const fails=(p.failed||[]).filter(f=>!f.flex);
+  const done=(p.fix||[]);
+  const by={};done.forEach(r=>{by[r["课程号"]]=r});
+  const opts=FOLLOW_WAYS.map(w=>'<option>'+w+'</option>').join("");
+  const head='<tr><th style="min-width:170px">课程</th><th>挂科学期</th><th>原成绩</th><th>跟进方式</th><th>新成绩</th><th>备注</th><th></th></tr>';
+  const rows=fails.map(f=>{
+    const d=by[f.code];
+    if(d)return '<tr class="fp-done"><td class="nm">'+esc(f.n)+'</td><td class="small">'+esc(f.t||"")+'</td><td>'+esc(f.s)+'</td>'+
+      '<td colspan="3" class="small">已登记：'+esc(d["跟进方式"]||"")+' '+esc(d["新成绩"]||"")+' 分'+(d["备注"]?"｜"+esc(d["备注"]):"")+'</td>'+
+      '<td><button class="btn danger" onclick="delFollow(\''+sid+'\',\''+f.code+'\')">撤销</button></td></tr>';
+    return '<tr><td class="nm">'+esc(f.n)+'<div class="small" style="color:var(--sub)">'+esc(f.code)+'</div></td>'+
+      '<td class="small">'+esc(f.t||"")+'</td><td>'+esc(f.s)+'</td>'+
+      '<td><select class="wy" id="fp-way-'+f.code+'">'+opts+'</select></td>'+
+      '<td><input class="sc" type="text" id="fp-score-'+f.code+'" placeholder="如 72"></td>'+
+      '<td><input type="text" id="fp-note-'+f.code+'" placeholder="选填" style="width:118px"></td>'+
+      '<td><button class="btn primary" onclick="saveFollow(\''+sid+'\',\''+f.code+'\')">保存</button></td></tr>';
+  }).join("");
+  const extra=done.filter(d=>!fails.some(f=>f.code===d["课程号"]));
+  const extraHtml=extra.length?'<h3 style="font-size:13.5px;margin:16px 0 6px">已跟进的课程</h3>'+
+    '<table class="fp-tbl">'+head+extra.map(d=>'<tr class="fp-done"><td class="nm">'+esc(d["课程名"]||d["课程号"])+'</td>'+
+      '<td class="small">—</td><td>—</td><td colspan="3" class="small">'+esc(d["跟进方式"]||"")+' '+esc(d["新成绩"]||"")+' 分'+
+      (d["备注"]?"｜"+esc(d["备注"]):"")+'（'+esc(d["更新时间"]||"")+'）</td>'+
+      '<td><button class="btn danger" onclick="delFollow(\''+sid+'\',\''+d["课程号"]+'\')">撤销</button></td></tr>').join("")+'</table>':'';
+  const body=fails.length?'<table class="fp-tbl">'+head+rows+'</table>':
+    '<div class="empty">该生当前没有挂科课程。若需修改「应修未修 / 课组缺口」，请调整培养方案或导入最新成绩。</div>';
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>成绩跟进 · '+esc(p.name||stu["姓名"]||sid)+'</h3>'+
+    '<div class="small" style="margin:-2px 0 12px">学号 '+esc(sid)+' ｜ 班级 '+esc(p.class||stu["班级"]||"—")+
+    ' ｜ 累计学分 '+(p.earned!==undefined?p.earned:"—")+
+    ' ｜ 警示 '+(p.warn&&p.warn.type?esc(p.warn.type):"无")+
+    '<br>登记补考/重修结果后，系统把该课视为已通过，学分与挂科自动重算；原始成绩文件不会被改动，可随时撤销。</div>'+
+    body+extraHtml+
+    '<div class="xls-row" style="margin-top:16px"><button class="btn" onclick="closeModal()">关闭</button></div>';
+  $("#mmask").style.display="block";$("#mbody").scrollTop=0;
+}
+async function saveFollow(sid,code){
+  const p=ASTU[sid]||{};
+  const f=(p.failed||[]).find(x=>x.code===code)||{};
+  const sc=(($("#fp-score-"+code)||{}).value||"").trim();
+  const way=(($("#fp-way-"+code)||{}).value||"补考").trim();
+  const note=(($("#fp-note-"+code)||{}).value||"").trim();
+  if(sc&&!/^\d+(\.\d+)?$/.test(sc)){showToast("新成绩填数字，或留空按 60 计",true);return}
+  try{
+    const r=await fetch("/api/academic/follow",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sid:sid,code:code,name:f.n||"",way:way,score:sc,note:note,pass:"是"})});
+    const j=await r.json();
+    if(!j.ok){showToast("保存失败："+(j.error||"未知错误"),true);return}
+    const st=j.student||{};
+    showToast("已登记 "+way+"结果"+(st.warn?"，该生仍为"+st.warn:"，已解除警示")+"，正在刷新…");
+    setTimeout(()=>location.reload(),900);
+  }catch(e){showToast("保存失败：未连接本地服务",true)}
+}
+async function delFollow(sid,code){
+  if(!confirm("撤销这条跟进记录？该课程将恢复为「挂科」状态。"))return;
+  try{
+    const r=await fetch("/api/academic/follow",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({sid:sid,code:code,action:"delete"})});
+    const j=await r.json();
+    if(!j.ok){showToast("撤销失败："+(j.error||"未知错误"),true);return}
+    showToast("已撤销，正在刷新…");
+    setTimeout(()=>location.reload(),900);
+  }catch(e){showToast("撤销失败：未连接本地服务",true)}
+}
+
 /* 刷新/重开后恢复上次所在位置（顶部导航），不强制回到全局总览（须在所有渲染完成后执行） */
 try{
   const _tp=localStorage.getItem("ldwb_tab")||"";
@@ -1725,6 +1929,8 @@ try{
            :_tp?document.querySelector('nav .tab[data-p="'+_tp+'"]'):null;
   if(_tb)_tb.click();
 }catch(e){}
+/* 启动后静默检查一次更新（仅编辑模式，且未设置更新源时静默跳过） */
+if(EDIT)setTimeout(()=>checkUpdate(false),2500);
 </script>
 </body>
 </html>

@@ -15,9 +15,16 @@
 - 公开仓库 = 只放代码 + `data_template/`（空表头）
 - 想连数据一起备份 → 用**私有仓库**，且只存代码，数据单独加密备份
 
-**② 安装包不需要"安装"，绿色 zip 更省事。**
+**② 两种发布形态：安装版 + 绿色版，按需下载。**
 
-本项目是纯 Python 标准库 + 一个静态 HTML，已经用 PyInstaller 打包过 `辅导员工作台.exe`（内置 Python 运行时，双击即用，不用装环境）。所以"安装包"实际上就是：**exe + 源码 + 空数据目录，压成一个 zip**，用户解压双击就行，不往系统里写注册表、不留卸载残留。
+本项目是纯 Python 标准库 + 一个静态 HTML，已经用 PyInstaller 打包过 `辅导员工作台.exe`（内置 Python 运行时，双击即用，不用装环境）。产物有两种：
+
+| 形态 | 文件 | 适合谁 |
+|---|---|---|
+| 安装版 | `辅导员工作台-vX.Y.Z-安装版.exe` | 想"像 QQ 一样装上就用"的人：双击 → 下一步 → 桌面图标，走系统卸载 |
+| 绿色版 | `辅导员工作台-vX.Y.Z-win64.zip` | 想放 U 盘/临时用、不想动系统的人：解压双击 |
+
+安装版用 Inno Setup 做，装到当前用户目录（`%LOCALAPPDATA%\Programs\辅导员工作台`），**不弹 UAC**；卸载时会问要不要保留学生数据，默认保留。工程在 `installer/`，改完代码双击 `installer\编译安装包.bat` 重新出包。
 
 ---
 
@@ -41,7 +48,7 @@ cd "C:/Users/20690/Downloads/23/23/辅导员工作台_输出"
 git init
 git add .
 git status            # ← 关键：确认列表里没有 data/、photos/、*.db、*.xlsx、*.exe
-git commit -m "辅导员工作台 v2.0.0：离线看板 + 学业分析"
+git commit -m "辅导员工作台 v2.1.0：在线更新 + 培养方案删除 + 成绩跟进"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/counselor-workbench.git
 git push -u origin main
@@ -72,14 +79,14 @@ git commit -m "移除误提交的数据目录"
 ## 2. 打一个"安装包"（1 分钟）
 
 ```bash
-python make_release.py          # 默认 2.0.0
+python make_release.py          # 版本号取自 version.py
 python make_release.py 2.0.1    # 指定版本号
 ```
 
-产物：`dist/辅导员工作台-v2.0.0-win64.zip`，内含
+产物：`dist/辅导员工作台-v2.1.0-win64.zip`，内含
 
 ```
-辅导员工作台-v2.0.0/
+辅导员工作台-v2.1.0/
 ├─ 辅导员工作台.exe      双击启动（内置 Python，免安装）
 ├─ 启动编辑模式.bat      没有 exe 时的备用启动方式
 ├─ *.py                 全部源码（server / build / academic …）
@@ -96,16 +103,20 @@ python make_release.py 2.0.1    # 指定版本号
 ## 3. 上传到 Releases（让别人能下载）
 
 1. 打开仓库页面 → 右侧 **Releases** → **Create a new release**
-2. **Choose a tag**：输入 `v2.0.0` → 点 "Create new tag: v2.0.0 on publish"
-3. Release title：`v2.0.0 首个可用版本`
+2. **Choose a tag**：输入 `v2.1.0` → 点 "Create new tag: v2.1.0 on publish"
+3. Release title：`v2.1.0 在线更新 + 学业跟进`
 4. 描述里写清：本版本新增学业模块、默认折叠培养方案、支持成绩替代认定等
-5. **Attach binaries**：把 `dist/辅导员工作台-v2.0.0-win64.zip` 拖进去
+5. **Attach binaries**：把这两个文件都拖进去
+   - `dist/辅导员工作台-v2.1.0-安装版.exe`（主推，普通用户下这个）
+   - `dist/counselor-workbench-setup-v2.1.0.exe`（同一文件，ASCII 名，给脚本/英文环境用）
+   - `dist/辅导员工作台-v2.1.0-win64.zip`（绿色版，备用）
 6. Publish release
 
 下载地址形如：
 
 ```
-https://github.com/<用户名>/counselor-workbench/releases/download/v2.0.0/辅导员工作台-v2.0.0-win64.zip
+https://github.com/<用户名>/counselor-workbench/releases/download/v2.1.0/辅导员工作台-v2.1.0-安装版.exe
+https://github.com/<用户名>/counselor-workbench/releases/download/v2.1.0/辅导员工作台-v2.1.0-win64.zip
 ```
 
 README 里那句 `[Releases](../../releases)` 会自动指向这个页面。
@@ -146,3 +157,22 @@ git push
 | 想让别人看效果 | 发 `dashboard_脱敏外发版.html`（单文件，双击即开） |
 | 想公开做开源项目 | 仓库 Public，但 README 里删掉学校名与真实人名 |
 | 担心数据泄露 | 每次 commit 前跑一遍第 1.3 节的自查命令 |
+
+---
+
+## 7. 让已装的程序能收到更新提示
+
+程序内置了更新检查（`updater.py`），读的是 GitHub 的 **latest release**。要让它生效，注意三点：
+
+1. **发布时不要勾 `This is a pre-release`**，也不要存成 Draft —— 草稿和预发布不会被算作 latest。
+2. **附件名要能被认出来**：安装包名字里带「安装」或 `setup`（编译脚本会自动生成
+   `辅导员工作台-v2.1.0-安装版.exe` 和 `counselor-workbench-setup-v2.1.0.exe` 两份），
+   程序优先下 `.exe`，没有才退回 `.zip`。
+3. **告诉程序你的仓库**：装好以后点侧栏「检查更新」，填 `用户名/仓库名` 保存一次即可
+   （写进 `data/settings.json`）；也可以把仓库写进程序目录的 `update.json`，随安装包分发。
+   私有仓库需要在同一处填一个只读 token，公开仓库留空。
+
+版本号只改 `version.py` 里的 `VERSION`，`make_release.py` 和安装包脚本都会跟着走；
+tag 用 `v2.1.0` 这种形式（带不带 `v` 都认）。
+
+发版顺序建议：先 `make_release.py` → `编译安装包.bat` → 上传 3 个附件（中文名 exe、ASCII 名 exe、zip）→ tag `v2.1.0`。

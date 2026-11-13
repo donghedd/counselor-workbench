@@ -18,13 +18,16 @@ import zipfile
 from app_paths import APP_HOME as HERE
 
 DIST = os.path.join(HERE, "dist")
-DEFAULT_VERSION = "2.0.0"
+import version as _version
+
+DEFAULT_VERSION = _version.VERSION
 
 # 需要随包发布的源码与文档
 FILES = [
     "launcher.py", "server.py", "build.py", "academic.py", "xlsx_io.py",
     "db_sync.py", "extract.py", "app_paths.py", "init_data.py", "verify.py",
-    "template.html",
+    "version.py", "updater.py", "update.json",
+    "template.html", "app.ico",
     "使用说明.md", "字段说明.md", "数据库说明.md",
     "启动编辑模式.bat", "一键更新看板.bat", "同步数据库到看板.bat",
 ]
@@ -34,9 +37,9 @@ EMPTY_DIRS = ["photos", "photos_src", "备份"]
 FIRST_RUN = """辅导员工作台 · 首次使用说明
 ========================================
 
-一、直接打开看板（只读）
-  双击「辅导员工作台.exe」→ 浏览器自动打开。
-  关闭黑色命令行窗口 = 停止服务。全程只监听 127.0.0.1，不上传任何数据。
+一、直接打开看板
+  双击「辅导员工作台.exe」→ 弹出独立窗口（和普通软件一样，不带浏览器界面）。
+  关闭窗口 = 退出程序。全程只监听 127.0.0.1，不上传任何数据。
 
 二、没有 exe / 提示缺少 Python 时
   双击「启动编辑模式.bat」（需要电脑已安装 Python 3.9+，安装时勾选 Add to PATH）。

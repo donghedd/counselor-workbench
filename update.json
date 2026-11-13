@@ -1,0 +1,5 @@
+{
+  "_note": "更新源配置：repo 填 GitHub 仓库 owner/name（例如 zhangsan/counselor-workbench）后，页面侧栏「检查更新」即可用。私有仓库另填 token（只读权限）。留空则不影响其它功能。",
+  "repo": "",
+  "token": ""
+}

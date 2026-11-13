@@ -13,7 +13,7 @@ import academic
 DATA = os.path.join(HERE, "data")
 PHOTOS = os.path.join(HERE, "photos")
 INDEX = os.path.join(HERE, "photo_index.json")
-PORT = 8787
+PORT = int(os.environ.get("WORKBENCH_PORT") or 8787)
 
 TALKS_FILE = "11_谈话跟进表.csv"
 TALK_HEADER = ["记录ID", "学号", "姓名", "谈话时间", "谈话方式", "谈话内容", "更新时间"]
@@ -538,6 +538,60 @@ def academic_plan_req(obj):
     return {"ok": True, "analyzed": bool(ana)}
 
 
+def academic_plan_delete(obj):
+    major = str(obj.get("major") or "").strip()
+    if not major:
+        raise ValueError("缺少专业名称")
+    ana = _current_analysis() or {}
+    affected = sum(1 for p in (ana.get("students") or {}).values() if p.get("major") == major)
+    if not academic.del_plan(major):
+        raise ValueError("未找到该专业的培养方案：" + major)
+    _reanalyze()                      # 该专业学生将回到「无方案」状态
+    rebuild_dashboard()
+    return {"ok": True, "major": major, "affected": affected}
+
+
+def academic_follow(obj):
+    rec = academic.save_follow(obj)
+    ana = _reanalyze()
+    rebuild_dashboard()
+    stu = (ana or {}).get("students", {}).get(str(obj.get("sid") or ""))
+    return {"ok": True, "record": rec, "analyzed": bool(ana),
+            "student": None if not stu else {
+                "failed": len([f for f in stu.get("failed", []) if not f.get("flex")]),
+                "earned": stu.get("earned"), "warn": (stu.get("warn") or {}).get("type") or ""}}
+
+
+def _current_analysis():
+    if not os.path.exists(academic.ANALYSIS_FILE):
+        return None
+    try:
+        with open(academic.ANALYSIS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def update_check(force=False):
+    import updater
+    return updater.check(force)
+
+
+def update_settings(obj):
+    import updater
+    repo = updater.set_repo(obj.get("repo"), obj.get("token"))
+    return {"ok": True, "repo": repo}
+
+
+def update_install(obj):
+    import updater
+    url = str(obj.get("url") or "").strip()
+    if not url.startswith("https://"):
+        raise ValueError("下载地址无效")
+    ok = updater.install_async(url, str(obj.get("name") or "setup.exe"))
+    return {"ok": ok, "started": ok}
+
+
 def academic_warning(obj):
     res = academic.add_warning(obj)
     rebuild_dashboard()
@@ -566,6 +620,29 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.unquote(self.path.split("?")[0])
+        if path in ("/favicon.ico", "/app.ico"):
+            from app_paths import res as _res
+            ico = _res("app.ico", os.path.join("installer", "assets", "app.ico"))
+            if os.path.exists(ico):
+                body = open(ico, "rb").read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "max-age=86400")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        if path == "/api/update/progress":
+            import updater
+            self._json(updater.progress())
+            return
+        if path == "/api/update/check":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                self._json(update_check(bool(q.get("force"))))
+            except Exception as e:
+                self._json({"ok": False, "code": "err", "error": str(e)[-200:]})
+            return
         if path == "/api/thumbs/plan":
             missing = []
             if os.path.exists(INDEX):
@@ -703,6 +780,38 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)[-300:]}, 500)
             return
+        if self.path == "/api/academic/plan/delete":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(academic_plan_delete(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
+        if self.path == "/api/academic/follow":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(academic_follow(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
+        if self.path == "/api/update/settings":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(update_settings(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-200:]}, 500)
+            return
+        if self.path == "/api/update/install":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(update_install(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-200:]}, 500)
+            return
         if self.path != "/api/save":
             self._json({"ok": False, "error": "not found"}, 404)
             return
@@ -784,6 +893,16 @@ def port_in_use(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
     finally:
         s.close()
+
+
+def start_server(port=PORT):
+    """在后台起服务（给桌面窗口外壳用）。端口被占则返回 None，表示已有实例在跑。"""
+    if port_in_use(port):
+        return None
+    httpd = HTTPServer(("127.0.0.1", port), Handler)
+    import threading
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd
 
 
 def main():

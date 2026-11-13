@@ -55,3 +55,8 @@ desktop.ini
 .idea/
 .vscode/
 *.log
+
+# ===== 窗口外壳运行时产物 =====
+启动日志.txt
+webview-profile/
+*.exe.bak*

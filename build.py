@@ -205,6 +205,11 @@ def main():
     data = {k: read_csv(fn) for k, fn in TABLES.items()}
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     data["generatedAt"] = now
+    try:
+        import version
+        data["version"] = version.VERSION
+    except Exception:
+        data["version"] = ""
     photos, thumbs = build_photo_map(data["students"])
     data["photos"], data["thumbs"] = photos, thumbs
     # 学业模块：培养方案 + 成绩分析 + 人工学业警示

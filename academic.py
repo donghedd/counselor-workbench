@@ -40,6 +40,8 @@ PLAN_FILE = os.path.join(DATA, "12_培养方案.json")
 ANALYSIS_FILE = os.path.join(DATA, "13_成绩分析.json")
 WARN_FILE = os.path.join(DATA, "14_学业警示.csv")
 WARN_HEADER = ["记录ID", "学号", "姓名", "警示类型", "级别", "原因", "学期", "来源", "更新时间"]
+FOLLOW_FILE = os.path.join(DATA, "15_成绩跟进.csv")
+FOLLOW_HEADER = ["学号", "课程号", "课程名", "跟进方式", "新成绩", "是否通过", "备注", "更新时间"]
 
 M = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 RE_CREDIT = re.compile(r"（要求学分：([\d.]+) 已修学分：([\d.]+)）")
@@ -420,6 +422,96 @@ def add_warning(o):
     return rec
 
 
+# ---------------------------------------------------------------- 成绩跟进（人工）
+def read_follow():
+    if not os.path.exists(FOLLOW_FILE):
+        return []
+    with open(FOLLOW_FILE, encoding="utf-8-sig", newline="") as f:
+        return [r for r in csv.DictReader(f) if (r.get("学号") or "").strip()]
+
+
+def _write_follow(rows):
+    os.makedirs(DATA, exist_ok=True)
+    with open(FOLLOW_FILE, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FOLLOW_HEADER)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def save_follow(o):
+    """登记/撤销「某学生某门课」的跟进结果（补考/重修/免修等）。
+
+    只记录人工跟进结论，不修改教务导出的原始成绩文件；
+    分析时把「已通过」的那一条落到成绩行上，学分与挂科随之重算，随时可撤销。
+    """
+    action = (o.get("action") or "save").strip()
+    sid = str(o.get("sid") or "").strip()
+    code = str(o.get("code") or "").strip()
+    if not sid or not code:
+        raise ValueError("缺少学号或课程号")
+    rows = [r for r in read_follow()
+            if not (r.get("学号") == sid and r.get("课程号") == code)]
+    if action == "delete":
+        _write_follow(rows)
+        return {"deleted": True, "sid": sid, "code": code}
+    passed = str(o.get("pass") or "是").strip() in ("是", "1", "true", "True", "通过")
+    score = str(o.get("score") or "").strip()
+    num = _f(score) if score else 0.0
+    if passed and num < 60:
+        num = 60.0          # 通过即视为及格，成绩至少 60
+    if score or num:
+        score = "%g" % num
+    rec = {"学号": sid, "课程号": code,
+           "课程名": str(o.get("name") or "").strip(),
+           "跟进方式": str(o.get("way") or ("补考" if passed else "待处理")).strip(),
+           "新成绩": score,
+           "是否通过": "是" if passed else "否",
+           "备注": str(o.get("note") or "").strip()[:120],
+           "更新时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
+    rows.append(rec)
+    _write_follow(rows)
+    return rec
+
+
+def follow_index():
+    """{学号: [跟进记录...]}，供页面展示。"""
+    out = collections.defaultdict(list)
+    for r in read_follow():
+        out[r.get("学号")].append(r)
+    return out
+
+
+def _apply_follow(rows):
+    """把「已通过」的跟进结论落到成绩行上，返回命中条数。
+
+    同一门课若有多条重修记录，只改最近一学期那一行（不追溯历史），
+    这样后续的挂科判定、学分累计、未获科目都会自然重算。
+    """
+    idx = {}
+    for r in read_follow():
+        if (r.get("是否通过") or "").strip() != "是":
+            continue
+        idx[(r.get("学号"), r.get("课程号"))] = r
+    if not idx:
+        return 0
+    best = {}
+    for r in rows:
+        sid = (r.get("学号") or "").strip()
+        for code in _row_codes(r):
+            k = (sid, code)
+            if k not in idx:
+                continue
+            tk = _term_key(r.get("学年学期")) or (0, 0)
+            if k not in best or tk > best[k][0]:
+                best[k] = (tk, r)
+    for k, (_tk, r) in best.items():
+        rec = idx[k]
+        r["总成绩"] = (rec.get("新成绩") or "").strip() or "60"
+        r["是否及格"] = "是"
+        r["重修重考"] = rec.get("跟进方式") or "跟进"
+    return len(best)
+
+
 # ---------------------------------------------------------------- 主分析
 def analyze_grades(fname, data):
     import xlsx_io
@@ -433,6 +525,8 @@ def analyze_grades(fname, data):
     rows = [r for r in rows if (r.get("学号") or "").strip() in roster]
     if not rows:
         raise ValueError("成绩表中没有匹配到学生主表里的学号")
+    _apply_follow(rows)                # 人工跟进的「已通过」先落到成绩行上
+    fix_by_sid = follow_index()
     terms = sorted({_term_key(r["学年学期"]) for r in rows if _term_key(r["学年学期"])})
     if not terms:
         raise ValueError("成绩表学期列无法识别")
@@ -724,6 +818,7 @@ def analyze_grades(fname, data):
             "unearned": {"g": unearned_g, "c": unearned_c},
             "cats": {k: round(v, 1) for k, v in catEarned.items() if v > 0},
             "cur": current_rows, "warn": warn,
+            "fix": fix_by_sid.get(sid, []),
         }
     # 方案课程明细：每门课的实际归口类别 + 计划学期 + 学分 + 课程性质 + 同专业修读率
     # （供「培养方案」页展开成课程表格；方案 xlsx 是合并单元格版式，学分/学期只能由成绩表反推）
@@ -825,4 +920,5 @@ def load_academic():
         with open(ANALYSIS_FILE, encoding="utf-8") as f:
             ana = json.load(f)
     return {"plans": plans.get("majors", {}), "analysis": ana, "warnings": read_warnings(),
+            "follows": read_follow(),
             "thresholds": {str(k): list(v) for k, v in YEAR_THRESHOLDS.items()}}
