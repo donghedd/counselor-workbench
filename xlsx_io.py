@@ -197,49 +197,65 @@ def _cell_value(c, shared):
 
 
 def read_table(fname, data):
-    """返回 [ {表头: 值} ]；支持 .xlsx/.xlsm 与 .csv/.txt"""
-    if not data:
-        raise ValueError("文件为空")
-    if data[:2] == b"PK":
-        z = zipfile.ZipFile(io.BytesIO(data))
-        shared = _shared_strings(z)
-        path = _first_sheet_path(z)
-        root = ET.fromstring(z.read(path))
-        grid = []
-        for row in root.iter():
-            if _tag(row) != "row":
-                continue
-            cells = {}
-            for c in row:
-                if _tag(c) != "c":
-                    continue
-                ref = c.attrib.get("r", "")
-                m = re.match(r"^([A-Z]+)(\d+)$", ref)
-                if not m:
-                    continue
-                letters = m.group(1)
-                ci = 0
-                for ch in letters:
-                    ci = ci * 26 + (ord(ch) - 64)
-                cells[ci - 1] = _cell_value(c, shared).strip()
-            if not cells:
-                continue
-            width = max(cells) + 1
-            grid.append([cells.get(i, "") for i in range(width)])
-        # 去掉整体空行
-        grid = [r for r in grid if any(str(v).strip() for v in r)]
-    else:
-        text = None
-        for enc in ("utf-8-sig", "utf-8", "gb18030"):
-            try:
-                text = data.decode(enc)
-                break
-            except UnicodeDecodeError:
-                continue
-        if text is None:
-            raise ValueError("无法识别文件编码，请另存为 UTF-8 CSV 或 .xlsx")
-        grid = [r for r in csv.reader(io.StringIO(text)) if any(str(v).strip() for v in r)]
+    """返回 (表头, 行列表)；支持 .xlsx/.xlsm 与 .csv/.txt。只读第一张工作表。"""
+    sh = read_sheets(fname, data)
+    return sh[0][1], sh[0][2]
 
+
+def _sheet_list(z):
+    """按工作簿顺序返回 [(工作表名, xml 路径)]；解析失败则回退第一张表"""
+    out = []
+    try:
+        wb = ET.fromstring(z.read("xl/workbook.xml"))
+        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        rel_map = {}
+        for r in rels:
+            t = r.attrib.get("Target", "").lstrip("/")
+            rel_map[r.attrib.get("Id")] = t if t.startswith("xl/") else "xl/" + t
+        for el in wb.iter():
+            if _tag(el) != "sheet":
+                continue
+            rid = None
+            for k, v in el.attrib.items():
+                if k.endswith("}id") or k == "r:id":
+                    rid = v
+                    break
+            p = rel_map.get(rid)
+            if p and p in z.namelist():
+                out.append((el.attrib.get("name", ""), p))
+    except Exception:
+        out = []
+    return out or [("", _first_sheet_path(z))]
+
+
+def _grid_of(root, shared):
+    """把一张工作表的 XML 解析成二维网格"""
+    grid = []
+    for row in root.iter():
+        if _tag(row) != "row":
+            continue
+        cells = {}
+        for c in row:
+            if _tag(c) != "c":
+                continue
+            ref = c.attrib.get("r", "")
+            m = re.match(r"^([A-Z]+)(\d+)$", ref)
+            if not m:
+                continue
+            letters = m.group(1)
+            ci = 0
+            for ch in letters:
+                ci = ci * 26 + (ord(ch) - 64)
+            cells[ci - 1] = _cell_value(c, shared).strip()
+        if not cells:
+            continue
+        width = max(cells) + 1
+        grid.append([cells.get(i, "") for i in range(width)])
+    # 去掉整体空行
+    return [r for r in grid if any(str(v).strip() for v in r)]
+
+
+def _grid_to_table(grid):
     if not grid:
         raise ValueError("表格里没有内容")
     header = [str(h).strip() for h in grid[0]]
@@ -252,3 +268,40 @@ def read_table(fname, data):
             obj[h] = str(r[i]).strip() if i < len(r) else ""
         out.append(obj)
     return header, out
+
+
+def read_sheets(fname, data):
+    """读取全部工作表 → [(工作表名, 表头, 行列表)]；csv/txt 视作单张表（名称为空）"""
+    if not data:
+        raise ValueError("文件为空")
+    if data[:2] == b"PK":
+        z = zipfile.ZipFile(io.BytesIO(data))
+        shared = _shared_strings(z)
+        out = []
+        for nm, path in _sheet_list(z):
+            try:
+                grid = _grid_of(ET.fromstring(z.read(path)), shared)
+            except Exception:
+                continue
+            if not grid:
+                continue
+            try:
+                header, rows = _grid_to_table(grid)
+            except ValueError:
+                continue
+            out.append((nm, header, rows))
+        if not out:
+            raise ValueError("表格里没有内容")
+        return out
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise ValueError("无法识别文件编码，请另存为 UTF-8 CSV 或 .xlsx")
+    grid = [r for r in csv.reader(io.StringIO(text)) if any(str(v).strip() for v in r)]
+    header, rows = _grid_to_table(grid)
+    return [("", header, rows)]

@@ -114,6 +114,24 @@ Filename: "{app}\{#AppExe}"; Description: "立即启动 {#AppName}"; Flags: nowa
 var
   DataKept: Boolean;
 
+{ 安装开始前，先把还在运行的旧程序结束掉。
+  为什么要自己动手：程序用 PyInstaller 打包，是「引导进程 + 应用进程」两层。
+  关窗口时偶尔会留下一个没有窗口、也不退出的引导进程（日志和 %TEMP%\_MEI* 残留可证），
+  它占着 exe 让 Restart Manager 关不掉，安装就卡在「正在关闭应用程序…」，
+  过一会儿弹出「安装程序无法自动关闭所有应用程序」，得手动点「重试」才能继续。
+  这里直接在它之前静默结束同名进程，装机就不会停在那一步。
+  直接调 taskkill.exe（不经 cmd），中文进程名不会因代码页出错；没在运行也无害。 }
+function InitializeSetup(): Boolean;
+var
+  RC: Integer;
+begin
+  Result := True;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "{#AppExe}"',
+       '', SW_HIDE, ewWaitUntilTerminated, RC);
+  { 等文件句柄释放，避免紧接着的复制报「文件正在使用」 }
+  Sleep(800);
+end;
+
 { 目标目录里已经有像样的学生数据吗？（表头之外还有行就算有） }
 function HasExistingData(): Boolean;
 var

@@ -60,3 +60,6 @@ desktop.ini
 启动日志.txt
 webview-profile/
 *.exe.bak*
+
+# 每轮验收用的整页截图，留在本机即可
+_预览*.png

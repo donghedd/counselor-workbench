@@ -3,17 +3,77 @@
 - 仅监听 127.0.0.1，不联外网，不上传任何数据；
 - 看板中点「保存更改」→ POST /api/save → 写回 data/*.csv → 自动重建看板与脱敏版。
 只读写 辅导员工作台_输出/ 目录，不碰任何原始文件。"""
-import base64, csv, datetime, json, os, re, subprocess, sys, urllib.parse
+import base64, csv, datetime, io, json, os, re, subprocess, sys, urllib.parse
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 from app_paths import APP_HOME as HERE
 import xlsx_io
 import academic
 
+try:                        # 图片兜底解码（缺 Pillow 时前端仍可用浏览器解码）
+    from PIL import Image, ImageOps
+except Exception:
+    Image = None
+
 DATA = os.path.join(HERE, "data")
 PHOTOS = os.path.join(HERE, "photos")
 INDEX = os.path.join(HERE, "photo_index.json")
 PORT = int(os.environ.get("WORKBENCH_PORT") or 8787)
+THUMB_MAX = 460
+
+
+def _img_kind(b):
+    """按文件头判断真实格式，用于给出比「读取失败」更有用的提示"""
+    h = b[:16]
+    if h[:3] == b"\xff\xd8\xff":
+        return "JPEG"
+    if h[:8] == b"\x89PNG\r\n\x1a\n":
+        return "PNG"
+    if h[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "WebP"
+    if h[:6] in (b"GIF87a", b"GIF89a"):
+        return "GIF"
+    if h[:2] == b"BM":
+        return "BMP"
+    if h[:4] in (b"II*\x00", b"MM\x00*"):
+        return "TIFF"
+    if h[4:8] == b"ftyp" and h[8:12] in (b"heic", b"heix", b"hevc", b"mif1", b"msf1", b"heif"):
+        return "HEIC"
+    if h[4:8] == b"ftyp" and h[8:12] in (b"avif", b"avis"):
+        return "AVIF"
+    return ""
+
+
+def save_thumb_bytes(raw, sid):
+    """任意常见格式 → 摆正 → 460px 白底 JPG；返回 (ok, 提示)"""
+    if not raw:
+        return False, "文件是空的（0 字节）"
+    if Image is None:
+        return False, "图片无法读取（本机缺少解码组件，请另存为 JPG 后重试）"
+    kind = _img_kind(raw)
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im.load()
+    except Exception:
+        if kind == "HEIC":
+            return False, "这是 HEIC 格式（苹果手机原图），请先另存为 JPG 再导入"
+        return False, "图片内容损坏或不是图片文件" + (("（实际是 %s）" % kind) if kind else "")
+    try:
+        im = ImageOps.exif_transpose(im)
+        if im.mode in ("RGBA", "LA", "P", "PA"):
+            im = im.convert("RGBA")
+            bg = Image.new("RGB", im.size, (255, 255, 255))
+            bg.paste(im, mask=im.split()[-1])
+            im = bg
+        elif im.mode != "RGB":
+            im = im.convert("RGB")
+        im.thumbnail((THUMB_MAX, THUMB_MAX), Image.LANCZOS)
+        os.makedirs(PHOTOS, exist_ok=True)
+        im.save(os.path.join(PHOTOS, str(sid) + ".jpg"), "JPEG", quality=84, optimize=True)
+        return True, "%s %d×%d" % (kind or "图片", im.size[0], im.size[1])
+    except Exception as e:
+        return False, "保存失败：%s" % str(e)[-120:]
+
 
 TALKS_FILE = "11_谈话跟进表.csv"
 TALK_HEADER = ["记录ID", "学号", "姓名", "谈话时间", "谈话方式", "谈话内容", "更新时间"]
@@ -213,8 +273,32 @@ def _export_width(field):
     return 22
 
 
+def _talk_records():
+    """谈话记录 → [{sid,name,when,way,content}]（按谈话时间倒序）"""
+    header, rows = _talk_rows()
+    tix = {c: i for i, c in enumerate(header)}
+
+    def g(r, k):
+        i = tix.get(k)
+        return (r[i] if i is not None and i < len(r) else "").strip()
+
+    out = []
+    for r in rows:
+        d = {"sid": g(r, "学号"), "name": g(r, "姓名"), "when": g(r, "谈话时间"),
+             "way": g(r, "谈话方式"), "content": g(r, "谈话内容")}
+        if d["sid"] or d["content"]:
+            out.append(d)
+    out.sort(key=lambda x: x["when"], reverse=True)
+    return out
+
+
+TALKS_SHEET = "谈话记录"
+TALKS_HEADER = ["专业", "学号", "姓名", "谈话时间", "方式", "内容"]
+TALKS_WIDTHS = [18, 16, 14, 20, 12, 64]
+
+
 def build_export(obj):
-    """按所选字段 / 范围生成填报表（xlsx），可选脱敏"""
+    """按所选字段 / 范围生成填报表（xlsx），可选脱敏；谈话记录作为单独工作表"""
     header, body = _read_students()
     if not header:
         raise ValueError("学生主表为空")
@@ -226,6 +310,7 @@ def build_export(obj):
     masked = bool(obj.get("masked"))
     keep_sid = obj.get("keepSid", True)
     blank = bool(obj.get("blank"))
+    with_talks = obj.get("withTalks", True)
 
     sids = obj.get("sids")
     rows_src = body
@@ -268,6 +353,14 @@ def build_export(obj):
     for f in order:
         enums = EXCEL_ENUMS.get(f) or (["齐全", "缺失", "待补充", "不适用"] if f in _MATERIAL_FIELDS else [])
         notes.append([f, "必填" if f in ("学号",) else "选填", FIELD_NOTES.get(f, "留空表示不修改该字段"), " / ".join(enums)])
+    notes += [
+        ["专业", "选填", "谈话记录表：仅用于对照，导入时不写回（专业以学生主表为准）", ""],
+        ["学号", "必填", "谈话记录表：按学号挂到学生名下；学号不存在则该条跳过", ""],
+        ["姓名", "选填", "谈话记录表：留空自动取学生主表姓名", ""],
+        ["谈话时间", "必填", "谈话记录表：如 2026-11-13 15:30，也支持 Excel 日期格式", "YYYY-MM-DD HH:MM"],
+        ["方式", "选填", "谈话记录表：面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他", "面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他"],
+        ["内容", "必填", "谈话记录表：本次谈话要点；同一学号 + 同一时间 + 相同内容视为重复，导入时跳过", ""],
+    ]
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
     if blank:
@@ -277,8 +370,41 @@ def build_export(obj):
         fname = "学生信息填报表_%s%s.xlsx" % (tag, ts)
     sheets = [
         {"name": "学生信息", "header": order, "rows": out_rows, "widths": [_export_width(f) for f in order]},
-        {"name": "填写说明", "header": ["字段", "必填", "说明", "可选值"], "rows": notes, "widths": [22, 8, 46, 40]},
     ]
+
+    # 谈话记录：单独一张表（空白模板只给表头，用于批量补录）
+    # talkFields 控制该工作表的列（前端「谈话跟进（sheet2）」分组），全不勾则前端不发 withTalks
+    talk_fields = [f for f in (obj.get("talkFields") or TALKS_HEADER) if f in TALKS_HEADER]
+    if with_talks and talk_fields:
+        torder = [f for f in TALKS_HEADER if f in talk_fields]
+        twidth = dict(zip(TALKS_HEADER, TALKS_WIDTHS))
+        talk_rows = []
+        if not blank:
+            prof_of, name_of = {}, {}
+            for r in body:
+                s = str(r[idx["学号"]]).strip()
+                if s:
+                    prof_of[s] = str(r[idx["专业"]]).strip() if "专业" in idx else ""
+                    name_of[s] = str(r[idx["姓名"]]).strip()
+            want = None if not sids else set(str(s).strip() for s in sids)
+            for t in _talk_records():
+                if want is not None and t["sid"] not in want:
+                    continue
+                nm, sid_out, content = t["name"] or name_of.get(t["sid"], ""), t["sid"], t["content"]
+                if masked:
+                    nm = _mask_name(nm)
+                    if not keep_sid:
+                        sid_out = _mask_sid(sid_out)
+                    for n in names:
+                        if n and n in content:
+                            content = content.replace(n, _mask_name(n))
+                rec = {"专业": prof_of.get(t["sid"], ""), "学号": sid_out, "姓名": nm,
+                       "谈话时间": t["when"], "方式": t["way"], "内容": content}
+                talk_rows.append([rec.get(f, "") for f in torder])
+        sheets.append({"name": TALKS_SHEET, "header": torder, "rows": talk_rows,
+                       "widths": [twidth.get(f, 18) for f in torder]})
+
+    sheets.append({"name": "填写说明", "header": ["字段", "必填", "说明", "可选值"], "rows": notes, "widths": [22, 8, 46, 40]})
     return xlsx_io.write_xlsx(sheets), fname, len(out_rows)
 
 
@@ -291,97 +417,223 @@ def _match_col(name, header):
     return cand[0] if len(cand) == 1 else None
 
 
+def _norm_talk_time(v):
+    """谈话时间规范化：兼容 Excel 日期序列号与 2026/11/13 这类写法"""
+    v = (v or "").strip().replace("T", " ").replace("/", "-")
+    if re.fullmatch(r"\d{5}(\.\d+)?", v):
+        try:
+            dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=float(v))
+            v = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+    return v
+
+
+TALK_IMPORT_COLS = {"学号": "学号", "姓名": "姓名", "专业": "专业",
+                    "谈话时间": "谈话时间", "时间": "谈话时间", "日期": "谈话时间",
+                    "谈话方式": "谈话方式", "方式": "谈话方式",
+                    "谈话内容": "谈话内容", "内容": "谈话内容"}
+
+
+def _is_talk_sheet(name, header):
+    """工作表是否为谈话记录：看表名，或看表头是否同时有「时间 + 内容」"""
+    if "谈话" in (name or ""):
+        return True
+    hs = [re.split(r"[（(]", h)[0].strip() for h in header]
+    return any(h in ("谈话时间", "时间") for h in hs) and any(h in ("谈话内容", "内容") for h in hs)
+
+
+def _import_talks(up_header, up_rows, known_sids):
+    """把「谈话记录」工作表并进 11_谈话跟进表.csv；返回 (新增数, 跳过明细, 提示)"""
+    t_header, t_rows = _talk_rows()
+    tix = {c: t_header.index(c) for c in TALK_HEADER}
+
+    def tget(r, k):
+        i = tix.get(k)
+        return (r[i] if i is not None and i < len(r) else "").strip()
+
+    col = {}
+    for h in up_header:
+        tgt = TALK_IMPORT_COLS.get(re.split(r"[（(]", h)[0].strip())
+        if tgt:
+            col.setdefault(tgt, h)
+    if "学号" not in col or "谈话内容" not in col:
+        raise ValueError("「%s」工作表缺少「学号」或「内容」列" % TALKS_SHEET)
+
+    seen = set((tget(r, "学号"), _norm_talk_time(tget(r, "谈话时间")), tget(r, "谈话内容"))
+               for r in t_rows)
+    nums = [int(tget(r, "记录ID")) for r in t_rows if tget(r, "记录ID").isdigit()]
+    next_id = max(nums) + 1 if nums else 1
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    added, skipped, warnings = 0, [], []
+    for line, row in enumerate(up_rows, start=2):
+        def gv(field):
+            key = col.get(field)
+            return str(row.get(key, "") or "").strip() if key else ""
+        sid = gv("学号")
+        content = gv("谈话内容")
+        when = _norm_talk_time(gv("谈话时间"))
+        if not sid and not content:
+            continue
+        if not sid:
+            skipped.append("第%d行：缺少学号，已跳过" % line)
+            continue
+        if sid not in known_sids:
+            warnings.append("第%d行：学号 %s 不在学生主表，该条谈话已跳过" % (line, sid))
+            continue
+        if not when or not content:
+            skipped.append("第%d行 %s：谈话时间或内容为空，已跳过" % (line, sid))
+            continue
+        key = (sid, when, content)
+        if key in seen:
+            skipped.append("第%d行 %s：%s 的相同谈话内容已存在，跳过" % (line, sid, when))
+            continue
+        r = [""] * len(t_header)
+        r[tix["记录ID"]] = str(next_id)
+        r[tix["学号"]] = sid
+        r[tix["姓名"]] = gv("姓名") or _student_name(sid)
+        r[tix["谈话时间"]] = when
+        r[tix["谈话方式"]] = gv("谈话方式")
+        r[tix["谈话内容"]] = content
+        r[tix["更新时间"]] = now
+        t_rows.append(r)
+        seen.add(key)
+        next_id += 1
+        added += 1
+
+    if added:
+        _write_talks(t_header, t_rows)
+    return added, skipped, warnings
+
+
 def apply_import(fname, data):
-    """把上传的表格合并进学生主表：有学号且存在→只更新填了值的列；学号不存在→新增一行"""
-    up_header, up_rows = xlsx_io.read_table(fname, data)
+    """合并上传的表格：学生信息表按学号更新/新增；「谈话记录」表并入谈话跟进表。
+    同一个文件里可以同时含这两张表。"""
+    sheets = xlsx_io.read_sheets(fname, data)
+    stu_sheet = talk_sheet = None
+    for nm, hdr, rows in sheets:
+        if _is_talk_sheet(nm, hdr):
+            if talk_sheet is None:
+                talk_sheet = (nm, hdr, rows)
+        elif stu_sheet is None and _match_col("学号", hdr):
+            stu_sheet = (nm, hdr, rows)
+    if stu_sheet is None and talk_sheet is None:
+        raise ValueError("没有找到可导入的工作表：需要有「学号」列的学生表，或「谈话记录」表")
+
     header, body = _read_students()
     idx = {h: i for i, h in enumerate(header)}
 
-    colmap, unknown = {}, []
-    for h in up_header:
-        tgt = _match_col(h, header)
-        if tgt:
-            colmap[h] = tgt
-        else:
-            unknown.append(h)
-    if "学号" not in colmap.values():
-        raise ValueError("表格中缺少「学号」列——请先下载模板再填写")
-    sid_key = [k for k, v in colmap.items() if v == "学号"][0]
-    name_key = next((k for k, v in colmap.items() if v == "姓名"), None)
+    updated = added = 0
+    skipped, warnings, unknown = [], [], []
 
-    by_sid = {}
-    for i, r in enumerate(body):
+    if stu_sheet is not None:
+        up_header, up_rows = stu_sheet[1], stu_sheet[2]
+        colmap = {}
+        for h in up_header:
+            tgt = _match_col(h, header)
+            if tgt:
+                colmap[h] = tgt
+            else:
+                unknown.append(h)
+        if "学号" not in colmap.values():
+            raise ValueError("表格中缺少「学号」列——请先下载模板再填写")
+        sid_key = [k for k, v in colmap.items() if v == "学号"][0]
+        name_key = next((k for k, v in colmap.items() if v == "姓名"), None)
+
+        by_sid = {}
+        for i, r in enumerate(body):
+            s = str(r[idx["学号"]]).strip() if len(r) > idx["学号"] else ""
+            if s:
+                by_sid.setdefault(s, i)
+
+        for line, row in enumerate(up_rows, start=2):
+            sid = str(row.get(sid_key, "")).strip()
+            nm = str(row.get(name_key, "")).strip() if name_key else ""
+            cells = {}
+            for k, col in colmap.items():
+                v = str(row.get(k, "") or "").strip()
+                if v and col != "学号":
+                    cells[col] = v
+            if not cells and not nm:
+                continue
+            # 枚举校验
+            for f, v in list(cells.items()):
+                allow = EXCEL_ENUMS.get(f)
+                if allow and v not in allow:
+                    warnings.append("第%d行 %s：%s 不在可选值（%s）内，已忽略该单元格" % (line, f, v, "/".join(allow)))
+                    del cells[f]
+            if sid and sid in by_sid:
+                r = body[by_sid[sid]]
+                while len(r) < len(header):
+                    r.append("")
+                if nm and nm != r[idx["姓名"]]:
+                    warnings.append("第%d行：学号 %s 在表中是「%s」，上传写的是「%s」，按学号匹配处理"
+                                    % (line, sid, r[idx["姓名"]], nm))
+                diff = {f: v for f, v in cells.items() if r[idx[f]] != v}
+                for f, v in diff.items():
+                    r[idx[f]] = v
+                if diff:
+                    updated += 1
+                else:
+                    skipped.append("第%d行 %s：与现有数据一致，无需更新" % (line, sid))
+            else:
+                if not nm:
+                    skipped.append("第%d行：学号「%s」不存在且没有姓名，已跳过" % (line, sid or "空"))
+                    continue
+                if not sid:
+                    skipped.append("第%d行 %s：缺少学号，无法新增" % (line, nm))
+                    continue
+                r = [""] * len(header)
+                r[idx["学号"]] = sid
+                r[idx["姓名"]] = nm
+                for f, v in cells.items():
+                    r[idx[f]] = v
+                body.append(r)
+                by_sid[sid] = len(body) - 1
+                added += 1
+    # 谈话记录（可单独上传，也可与学生表同文件）
+    known_sids = set()
+    for r in body:
         s = str(r[idx["学号"]]).strip() if len(r) > idx["学号"] else ""
         if s:
-            by_sid.setdefault(s, i)
-
-    updated = added = 0
-    skipped, warnings = [], []
-    for line, row in enumerate(up_rows, start=2):
-        sid = str(row.get(sid_key, "")).strip()
-        nm = str(row.get(name_key, "")).strip() if name_key else ""
-        cells = {}
-        for k, col in colmap.items():
-            v = str(row.get(k, "") or "").strip()
-            if v and col != "学号":
-                cells[col] = v
-        if not cells and not nm:
-            continue
-        # 枚举校验
-        for f, v in list(cells.items()):
-            allow = EXCEL_ENUMS.get(f)
-            if allow and v not in allow:
-                warnings.append("第%d行 %s：%s 不在可选值（%s）内，已忽略该单元格" % (line, f, v, "/".join(allow)))
-                del cells[f]
-        if sid and sid in by_sid:
-            r = body[by_sid[sid]]
-            while len(r) < len(header):
-                r.append("")
-            if nm and nm != r[idx["姓名"]]:
-                warnings.append("第%d行：学号 %s 在表中是「%s」，上传写的是「%s」，按学号匹配处理"
-                                % (line, sid, r[idx["姓名"]], nm))
-            diff = {f: v for f, v in cells.items() if r[idx[f]] != v}
-            for f, v in diff.items():
-                r[idx[f]] = v
-            if diff:
-                updated += 1
-            else:
-                skipped.append("第%d行 %s：与现有数据一致，无需更新" % (line, sid))
-        else:
-            if not nm:
-                skipped.append("第%d行：学号「%s」不存在且没有姓名，已跳过" % (line, sid or "空"))
-                continue
-            if not sid:
-                skipped.append("第%d行 %s：缺少学号，无法新增" % (line, nm))
-                continue
-            r = [""] * len(header)
-            r[idx["学号"]] = sid
-            r[idx["姓名"]] = nm
-            for f, v in cells.items():
-                r[idx[f]] = v
-            body.append(r)
-            by_sid[sid] = len(body) - 1
-            added += 1
+            known_sids.add(s)
+    talk_added, talk_skipped, talk_warnings = 0, [], []
+    if talk_sheet is not None:
+        talk_added, talk_skipped, talk_warnings = _import_talks(talk_sheet[1], talk_sheet[2], known_sids)
+        warnings += talk_warnings
 
     result = {"ok": True, "updated": updated, "added": added,
               "skipped": skipped[:12], "skippedCount": len(skipped),
-              "warnings": warnings[:12], "unknown": unknown[:12], "rebuilt": False}
-    if not updated and not added:
+              "warnings": warnings[:12], "unknown": unknown[:12], "rebuilt": False,
+              "talks": {"added": talk_added, "skipped": talk_skipped[:12],
+                        "skippedCount": len(talk_skipped)}}
+
+    if not updated and not added and not talk_added:
+        if not skipped and not talk_skipped:
+            result["warnings"].append("表格里没有可导入的内容（学生表为空或都已是最新）")
         return result
 
     # 备份 → 写回 → 重建看板 → 同步数据库
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    import shutil
-    shutil.copy2(os.path.join(DATA, STU_FILE), os.path.join(BACKUP_DIR, "01_学生主表_导入前_%s.csv" % ts))
-    with open(os.path.join(DATA, STU_FILE), "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(header)
-        w.writerows(body)
+    if updated or added:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        import shutil
+        shutil.copy2(os.path.join(DATA, STU_FILE), os.path.join(BACKUP_DIR, "01_学生主表_导入前_%s.csv" % ts))
+        with open(os.path.join(DATA, STU_FILE), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            w.writerows(body)
     rebuild_dashboard()
     try:
         import db_sync
-        db_sync.sync_tables_from_csv(["students"])
+        tables = []
+        if updated or added:
+            tables.append("students")
+        if talk_added:
+            tables.append("talks")
+        if tables:
+            db_sync.sync_tables_from_csv(tables)
     except Exception:
         pass
     result["rebuilt"] = True
@@ -402,6 +654,117 @@ def _write_table(fn, header, rows):
         w = csv.writer(f)
         w.writerow(header)
         w.writerows(rows)
+
+
+def add_todo(obj):
+    """新增一条跨域待办（默认「未开始」）：追加到 10_跨域待办表.csv 末尾。
+
+    表头里「风险等级(高/中/低)」「状态(未开始/…)」带枚举说明，按短名匹配写入。
+    返回新行在前端 DATA.todos 中的下标，前端可直接 push 后重绘。
+    """
+    rec = obj or {}
+    p = os.path.join(DATA, TABLES["todos"])
+    with open(p, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        raise ValueError("待办表为空")
+    header, body = rows[0], rows[1:]
+
+    def col(name):
+        for i, h in enumerate(header):
+            if h == name or h.split("(")[0].split("（")[0].strip() == name:
+                return i
+        return -1
+
+    item = str(rec.get("事项", "")).strip()
+    if not item:
+        raise ValueError("待办事项不能为空")
+    mx = 0
+    ci = col("编号")
+    for r in body:
+        if ci >= 0 and len(r) > ci:
+            m = re.fullmatch(r"[Tt]\s*0*(\d+)", r[ci].strip())
+            if m:
+                mx = max(mx, int(m.group(1)))
+    # 编号位数跟已有记录保持一致（原表 T01…T15，新增就补到 2 位；超过 99 自动加宽）
+    _n = str(mx + 1)
+    defaults = {"编号": "T%0*d" % (max(2, len(_n)), mx + 1), "工作域": "通用", "对象": "—", "事项": item,
+                "说明": "", "风险等级": "中", "截止日期": "待补充", "负责人": "",
+                "下次跟进日期": "待补充", "状态": "未开始", "来源": "手工新增"}
+    row = [""] * len(header)
+    for k, dflt in defaults.items():
+        i = col(k)
+        if i < 0:
+            continue
+        v = str(rec.get(k, "") or "").strip()
+        row[i] = v or dflt
+    body.append(row)
+    _backup_file(p)
+    with open(p, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows([header] + body)
+    rebuild_dashboard()
+    try:
+        import db_sync
+        db_sync.sync_tables_from_csv(["todos"])
+    except Exception:
+        pass
+    out = {}
+    for i, h in enumerate(header):
+        out[h.split("(")[0].split("（")[0].strip()] = row[i] if i < len(row) else ""
+    out["_i"] = len(body) - 1
+    return {"ok": True, "index": len(body) - 1, "record": out}
+
+
+def del_todo(obj):
+    """删除一条跨域待办：优先按「编号」定位，其次按「事项」，最后才用行号。
+
+    删前自动备份原 CSV，删后重建看板并同步数据库。
+    """
+    rec = obj or {}
+    p = os.path.join(DATA, TABLES["todos"])
+    with open(p, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        raise ValueError("待办表为空")
+    header, body = rows[0], rows[1:]
+
+    def col(name):
+        for i, h in enumerate(header):
+            if h == name or h.split("(")[0].split("（")[0].strip() == name:
+                return i
+        return -1
+
+    ci, ii = col("编号"), col("事项")
+    tid = str(rec.get("id") or "").strip()
+    item = str(rec.get("item") or "").strip()
+
+    def cell(r, i):
+        return r[i].strip() if 0 <= i < len(r) else ""
+
+    hit = -1
+    if tid and item:
+        hit = next((k for k, r in enumerate(body) if cell(r, ci) == tid and cell(r, ii) == item), -1)
+    if hit < 0 and tid:
+        hit = next((k for k, r in enumerate(body) if cell(r, ci) == tid), -1)
+    if hit < 0 and item:
+        hit = next((k for k, r in enumerate(body) if cell(r, ii) == item), -1)
+    if hit < 0 and rec.get("row") is not None:
+        k = int(rec["row"])
+        if 0 <= k < len(body):
+            hit = k
+    if hit < 0:
+        raise ValueError("找不到这条待办（可能已被删除，请刷新页面）")
+    gone = body.pop(hit)
+    _backup_file(p)
+    with open(p, "w", encoding="utf-8-sig", newline="") as f:
+        csv.writer(f).writerows([header] + body)
+    rebuild_dashboard()
+    try:
+        import db_sync
+        db_sync.sync_tables_from_csv(["todos"])
+    except Exception:
+        pass
+    return {"ok": True, "removed": cell(gone, ii) or cell(gone, ci), "left": len(body)}
 
 
 def add_student(obj):
@@ -437,6 +800,55 @@ def add_student(obj):
     except Exception:
         pass
     return {"ok": True, "sid": sid, "name": name}
+
+
+def set_study_year(obj):
+    """设置某学生的「在校学年」（1~6）：休学/降级后按实际年级判定警示。
+
+    写入学生主表后重跑成绩分析（阈值按新学年取）并重建看板。
+    """
+    sid = str(obj.get("sid") or "").strip()
+    if not sid:
+        raise ValueError("缺少学号")
+    try:
+        n = int(str(obj.get("year")).strip())
+    except (TypeError, ValueError):
+        raise ValueError("在校学年必须为 1~6 的数字")
+    if not 1 <= n <= 6:
+        raise ValueError("在校学年必须为 1~6 的数字")
+    header, body = _read_students()
+    if not header:
+        raise ValueError("学生主表为空")
+    if "在校学年" not in header:
+        header.append("在校学年")
+        for r in body:
+            r.append("")
+    idx = {h: i for i, h in enumerate(header)}
+    hit = None
+    for r in body:
+        if len(r) > idx["学号"] and r[idx["学号"]].strip() == sid:
+            hit = r
+            break
+    if hit is None:
+        raise ValueError("未找到学生：%s" % sid)
+    while len(hit) < len(header):
+        hit.append("")
+    old = hit[idx["在校学年"]]
+    hit[idx["在校学年"]] = str(n)
+    _backup_file(os.path.join(DATA, STU_FILE))
+    _write_table(STU_FILE, header, body)
+    ana = _reanalyze()
+    rebuild_dashboard()
+    try:
+        import db_sync
+        db_sync.sync_tables_from_csv(["students"])
+    except Exception:
+        pass
+    warn = {}
+    if ana:
+        warn = ((ana.get("students") or {}).get(sid) or {}).get("warn") or {}
+    return {"ok": True, "sid": sid, "year": n, "old": old,
+            "warn": warn, "analyzed": bool(ana)}
 
 
 def delete_students(obj):
@@ -698,6 +1110,25 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)}, 500)
             return
+        if self.path == "/api/thumb_raw":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                if ln > 80 * 1024 * 1024:
+                    self._json({"ok": False, "error": "文件太大（超过 80MB），请先压缩再导入"}, 413)
+                    return
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                sid = str(obj.get("sid") or "").strip()
+                data = str(obj.get("data") or "")
+                if "," in data:
+                    data = data.split(",", 1)[1]
+                if not sid:
+                    self._json({"ok": False, "error": "缺少学号"})
+                    return
+                ok, msg = save_thumb_bytes(base64.b64decode(data), sid)
+                self._json({"ok": ok, "info": msg, "error": "" if ok else msg}, 200 if ok else 500)
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-200:]}, 500)
+            return
         if self.path == "/api/talk":
             try:
                 ln = int(self.headers.get("Content-Length", 0))
@@ -715,11 +1146,35 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json({"ok": False, "error": str(e)[-300:]}, 500)
             return
+        if self.path == "/api/student/year":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(set_study_year(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
         if self.path == "/api/student/delete":
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 obj = json.loads(self.rfile.read(ln).decode("utf-8"))
                 self._json(delete_students(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
+        if self.path == "/api/todo/add":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(add_todo(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
+        if self.path == "/api/todo/del":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(del_todo(obj))
             except Exception as e:
                 self._json({"ok": False, "error": str(e)[-300:]}, 500)
             return

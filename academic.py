@@ -28,7 +28,8 @@
 - 挂科：文化素质类 / 学科交叉课程未通过标记 flex（不强制重修，可在课组内另选补足学分），
   不计入警示挂科门数；其余必修/限选课程挂科才计入警示；
 - 学分警示：按修业年限阈值表（1:30/25/15 2:70/55/45 3:110/85/75 4:留级115 退学105）；
-- 警示类型：大四挂科=毕业警示，大一~大三挂科=留级警示；累计学分不足线另注在说明里。
+- 警示类型三类（从重到轻）：退学警示/留级警示看累计学分有没有达到该年级学分线；
+  学业警示按培养方案看应修未修、以及挂了方案内且课组学分仍缺口的课（课组达标则不提醒）。
 """
 import csv, datetime, io, json, os, re, zipfile, collections
 import xml.etree.ElementTree as ET
@@ -695,13 +696,20 @@ def analyze_grades(fname, data):
             if got < req - 0.05:
                 short_all.append({"k": key, "req": req, "got": got})
         short = [s for s in short_all if not any(o["k"].startswith(s["k"] + " > ") for o in short_all)]
-        # 修业年限
+        # 修业年限：默认按学号入学年推算；休学/降级等以学生主表的「在校学年」为准
         yv = max(1, cur[0] - entry + 1)
+        yv_manual = ""
+        try:
+            _sy = int(float(str(stu.get("在校学年") or "").strip() or 0))
+        except (TypeError, ValueError):
+            _sy = 0
+        if 1 <= _sy <= 6:
+            yv_manual = _sy
+            yv = _sy
         # 应修未修
         missing = []
         if plan.get("codes") and last_completed:
             shortfall_keys = {s["k"] for s in short}
-            shortfall_keys |= {p for k in shortfall_keys for p in _parents(k)}
             cand = {}
             # 该生已修过但挂科的课（含其替代课号）：挂科明细里会列，这里不重复点名"未选课"
             failed_codes = {f["code"] for f in failed} | {alias.get(f["code"]) for f in failed}
@@ -718,7 +726,7 @@ def analyze_grades(fname, data):
                 if _is_flex_cat(cat):
                     continue  # 文化素质/外语/学科交叉属自由选课凑学分，不点名具体课程
                 key = " > ".join(cat)
-                if key not in shortfall_keys and not (_parents(key) & shortfall_keys):
+                if not _short_hit(key, shortfall_keys):
                     continue
                 p = pop.get((major, code), 0)
                 if p < 0.3:
@@ -784,35 +792,56 @@ def analyze_grades(fname, data):
                         if acc >= gap - 0.05 or listed >= (1 if one_of else 4):
                             break
         unearned_g.sort(key=lambda x: -x["short"])
-        # 警示
+        # 警示：三类，从重到轻 —— 退学警示 / 留级警示 / 学业警示
+        #   退学、留级：只看累计学分有没有达到该年级的学分线（学校的学业预警标准）
+        #   学业      ：按培养方案口径 —— 该修的课没修（应修未修），或挂了方案内的课
+        #               且这门课所属课组的学分还没凑够。课组学分已达标（例如文化素质类
+        #               用别的课补足了），那么这一门挂科不影响毕业，不予提醒。
         warn = {"type": "", "level": "", "note": ""}
         failed_n = len(failed)
-        th = YEAR_THRESHOLDS.get(yv, (None, None, None))
+        # 第 6 学年及以上沿用第 5 学年标准（该年级只有退学线），避免高年级无标准可依
+        th = YEAR_THRESHOLDS.get(yv) or YEAR_THRESHOLDS.get(5) or (None, None, None)
         notes = []
         # 自由课组（文化素质/外语/交叉）学分没凑够：属"应获未获"，在说明里点出缺口
         for sk in short:
             leaf = sk["k"].split(" > ")[-1]
             if leaf in FLEX_GROUPS:
                 notes.append("%s差 %.1f 学分（需补选同类课程）" % (leaf, sk["req"] - sk["got"]))
-        if failed_n:
-            warn["type"] = "毕业警示" if yv >= 4 else "留级警示"
-            warn["level"] = "挂科 %d 门" % failed_n
-        if th[1] is not None and earned < th[1]:
-            notes.append("累计学分 %.1f 低于 %g 分（留级线）" % (earned, th[1]))
-            if not warn["type"]:
-                warn["type"] = "毕业警示" if yv >= 4 else "留级警示"
+        # 方案内仍未拿到的课：挂了、且所属课组仍处于缺口状态
+        short_keys = {s["k"] for s in short}
+        fail_short = [f for f in failed if _short_hit(f.get("cat"), short_keys)]
         if th[2] is not None and earned < th[2]:
-            notes.append("累计学分 %.1f 低于 %g 分（退学警示线）" % (earned, th[2]))
-        if th[0] is not None and earned < th[0] and not warn["type"]:
+            warn["type"] = "退学警示"
+            warn["level"] = "累计 %.1f 学分，低于退学线 %g 分" % (earned, th[2])
+        elif th[1] is not None and earned < th[1]:
+            warn["type"] = "留级警示"
+            warn["level"] = "累计 %.1f 学分，低于留级线 %g 分" % (earned, th[1])
+        elif fail_short or missing:
             warn["type"] = "学业警示"
-        if th[0] is not None and earned < th[0]:
-            notes.append("累计学分 %.1f 低于 %g 分（学业警示线）" % (earned, th[0]))
-        if yv >= 4 and not notes:
+            bits = []
+            if fail_short:
+                bits.append("挂科 %d 门" % len(fail_short))
+            if missing:
+                bits.append("应修未修 %d 门" % len(missing))
+            warn["level"] = " · ".join(bits)
+        # 学分缺口照旧写进说明（表格"说明"列会显示）
+        if th[2] is not None and earned < th[2]:
+            notes.insert(0, "累计学分 %.1f 低于 %g 分（退学警示线）" % (earned, th[2]))
+        if th[1] is not None and earned < th[1]:
+            notes.insert(0, "累计学分 %.1f 低于 %g 分（留级线）" % (earned, th[1]))
+        if warn["type"] == "学业警示" and not notes:
+            todo = [f.get("n") for f in fail_short][:2] + [m.get("n") for m in missing][:2]
+            todo = [t for t in todo if t]
+            if todo:
+                more = (len(fail_short) + len(missing)) > len(todo)
+                notes.append("待完成：" + "、".join(todo) + ("…" if more else ""))
+        if not warn["type"] and yv >= 4 and not notes:
             notes.append("第四学年：须修满培养方案全部学分方可毕业")
         warn["note"] = "；".join(notes)
         per[sid] = {
             "name": stu.get("姓名", ""), "major": major, "class": stu.get("班级", ""),
             "year": yv, "earned": earned,
+            "yearAuto": max(1, cur[0] - entry + 1), "yearManual": yv_manual,
             "failed": failed, "missing": missing, "extra": extra,
             "short": short,
             "unearned": {"g": unearned_g, "c": unearned_c},
@@ -910,6 +939,22 @@ def _late_hint(key):
 def _parents(key):
     parts = key.split(" > ")
     return {" > ".join(parts[:i]) for i in range(1, len(parts))}
+
+
+def _short_hit(cat, short_keys):
+    """课程所属课组是否真的缺学分。
+
+    只看「自身课组」和「自己下面的子课组」，不看上层汇总组：
+    例如「通识限选 > 体育类-限选 > 体育俱乐部」缺学分时，同属通识限选的
+    「四史类」并不缺 —— 四史类四门课修过任意一门（2 学分）即达标，不应被点名。
+    """
+    cat = cat or ""
+    if not cat:
+        return False
+    for k in short_keys:
+        if cat == k or cat.startswith(k + " > "):
+            return True
+    return False
 
 
 def load_academic():

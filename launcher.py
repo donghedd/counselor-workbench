@@ -10,8 +10,10 @@
 窗口外壳优先级：WebView2（pywebview）→ Edge --app 独立窗口 → 默认浏览器（兜底）。
 """
 import os
+import re
 import sys
 import time
+import base64
 import traceback
 
 from app_paths import APP_HOME
@@ -137,13 +139,83 @@ def _prepare():
 
 
 # ---------------------------------------------------------------- 三种窗口外壳
+def _downloads_dir():
+    """定位系统的「下载」文件夹（中文系统可能叫 Downloads）。"""
+    if os.name == "nt":
+        try:
+            import winreg
+            key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                p = winreg.QueryValueEx(k, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
+            if p and os.path.isdir(p):
+                return p
+        except Exception:
+            pass
+    home = os.path.expanduser("~")
+    for cand in (os.path.join(home, "Downloads"), os.path.join(home, "下载")):
+        if os.path.isdir(cand):
+            return cand
+    return home
+
+
+def _safe_name(name):
+    """去掉路径成分和非法字符，只留文件名。"""
+    name = os.path.basename(str(name or "").replace("\\", "/"))
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    return name or "导出文件"
+
+
+class _JsApi:
+    """给页面提供的少量本地能力（WebView2 默认禁止浏览器下载，这里直接落盘）。"""
+
+    def save_bytes(self, filename, b64):
+        name = _safe_name(filename)
+        folder = _downloads_dir()
+        try:
+            data = base64.b64decode(b64 or "")
+        except Exception:
+            return {"ok": False, "msg": "数据解码失败"}
+        stem, ext = os.path.splitext(name)
+        path = os.path.join(folder, name)
+        n = 2
+        while os.path.exists(path):          # 同名不覆盖，自动加序号
+            path = os.path.join(folder, "%s(%d)%s" % (stem, n, ext))
+            n += 1
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
+        except Exception as e:
+            _log("保存文件失败：%s" % e)
+            return {"ok": False, "msg": "写入失败：%s" % e}
+        _log("已保存：%s" % path)
+        return {"ok": True, "path": path, "dir": folder,
+                "name": os.path.basename(path), "size": len(data)}
+
+    def open_folder(self, path):
+        """打开文件所在文件夹（页面保存成功后提示用）。"""
+        try:
+            folder = path if os.path.isdir(path) else os.path.dirname(path)
+            if folder and os.path.isdir(folder):
+                if os.name == "nt":
+                    os.startfile(folder)
+                return {"ok": True}
+        except Exception as e:
+            _log("打开文件夹失败：%s" % e)
+        return {"ok": False}
+
+
 def _run_webview(url):
     """首选：WebView2 原生窗口（无地址栏、无标签页，关窗即退出）。"""
     import webview
+    try:
+        webview.settings["ALLOW_DOWNLOADS"] = True   # 允许页面直接触发的下载
+    except Exception:
+        pass
     webview.create_window(
         APP_TITLE, url,
         width=1366, height=880, min_size=(1080, 700),
         background_color="#f2f5fa", text_select=True,
+        js_api=_JsApi(),
     )
     webview.start(_apply_icon)
 
