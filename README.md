@@ -86,10 +86,18 @@ Windows 下也可以直接双击 `启动编辑模式.bat`。
 ├─ updater.py           GitHub Release 检查 + 一键下载安装
 ├─ update.json          更新源配置（仓库 owner/name，可留空）
 ├─ template.html        前端模板（唯一不含数据的版本）
-├─ data_template/       空表结构（只有表头，可安全提交）
 ├─ make_release.py      一键打发布 zip
-└─ installer/           安装包工程（Inno Setup 脚本 + 图标资源）
+├─ 启动编辑模式.bat      没有 exe 时的备用启动方式
+├─ 一键更新看板.bat      CSV → 看板 + 数据库
+├─ 同步数据库到看板.bat  数据库 → CSV + 看板
+├─ data_template/       空表结构（只有表头，可安全提交）
+├─ docs/                使用说明 / 字段说明 / 数据库说明 / GitHub 发布指南
+├─ installer/           安装包工程（Inno Setup 脚本 + 图标资源）
+└─ dist/                打包产物（安装包、绿色 zip，不入库）
 ```
+
+运行时会生成（`data/`、`photos/`、`dashboard.html`、`*.db` 等，均已在 `.gitignore` 排除）：
+`dashboard.html`、`dashboard_脱敏外发版.html`、`工作台数据汇总.xlsx`、`导出_脱敏版/`。
 
 安装包怎么来的：
 

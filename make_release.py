@@ -22,13 +22,17 @@ import version as _version
 
 DEFAULT_VERSION = _version.VERSION
 
-# 需要随包发布的源码与文档
+# 需要随包发布的源码与文档。文档在仓库里放在 docs/ 下，发布包里仍然摊在根目录，
+# 这样用户解压后就在 exe 旁边看到「使用说明.md」，安装包的快捷方式也不用改路径。
+# 每项可以是文件名，也可以是 (源路径, 包内文件名)。
 FILES = [
     "launcher.py", "server.py", "build.py", "academic.py", "xlsx_io.py",
     "db_sync.py", "extract.py", "app_paths.py", "init_data.py", "verify.py",
     "version.py", "updater.py", "update.json",
     "template.html", "app.ico",
-    "使用说明.md", "字段说明.md", "数据库说明.md",
+    ("docs/使用说明.md", "使用说明.md"),
+    ("docs/字段说明.md", "字段说明.md"),
+    ("docs/数据库说明.md", "数据库说明.md"),
     "启动编辑模式.bat", "一键更新看板.bat", "同步数据库到看板.bat",
 ]
 EXE_NAMES = ["辅导员工作台.exe"]
@@ -64,13 +68,14 @@ FIRST_RUN = """辅导员工作台 · 首次使用说明
 
 def copytree_files(root, dst):
     ok, miss = 0, []
-    for fn in FILES:
-        src = os.path.join(HERE, fn)
+    for item in FILES:
+        rel, name = item if isinstance(item, tuple) else (item, item)
+        src = os.path.join(root, rel)
         if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(dst, fn))
+            shutil.copy2(src, os.path.join(dst, name))
             ok += 1
         else:
-            miss.append(fn)
+            miss.append(rel)
     return ok, miss
 
 
