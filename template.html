@@ -1654,7 +1654,13 @@ function acWarnTable(){
 function anaHasData(){return Object.keys(ASTU).length>0}
 let AC_PLAN_MJ=null;
 const AC_FOLD={};                                 // 折叠状态：「专业||类别key」-> true(收起)/false(展开)
-const AC_PLAN_SKIP=["文化素质类-计科","四史类"];   // 这两类不展开（自由选课，课程池几百门）
+/* 自由选课类课组：方案里列出的是可选课程（实际课程池远大于此），修够课组学分即可。
+   照常显示，但标题上标注清楚，避免误读成「必须修这些课」。 */
+const AC_FREE_CAT=/文化素质类|四史类|外语拓展|外语基础|学科交叉|艺术类/;
+/* 课程池不固定的课组（文化素质、学科交叉）：一门课都不罗列，只标要求学分；
+   子类（哲学社会科学 / 文化交流与国际视野 / 自然科学与工程技术 / 艺术体育）照常列出。
+   四史类相反——固定四门课，照常罗列。 */
+const AC_NO_ROWS=/文化素质类|学科交叉/;
 function setAcPlanMajor(m){AC_PLAN_MJ=m;renderAcPlans()}
 function acGuessCat(nm){  // 方案归口缺失时的最后兜底（正常都以方案自带归口为准）
   if(/毕业设计|毕业论文|毕业实习/.test(nm||""))return "专业必修";
@@ -1721,7 +1727,6 @@ function renderAcPlans(){
     (byCat[key]=byCat[key]||[]).push({code:code,n:nm,c:st.c||pd.c||0,t:st.t||pd.t||"",k:st.k||pd.k||"",pop:st.pop||0});
   });
   const inPlan=k=>cats.some(c=>c.key===k);
-  const skip=k=>AC_PLAN_SKIP.some(x=>k===x||k.split(" > ").indexOf(x)>=0);
   /* 类别树：父类别 key 是子类别 key 的前缀 */
   const nodes={};
   cats.forEach(c=>{
@@ -1736,17 +1741,28 @@ function renderAcPlans(){
     }
   });
   function renderNode(n){
-    const kids=n.kids.filter(k=>!skip(k.key)).sort((a,b)=>String(a.key).localeCompare(String(b.key),"zh"));
+    const kids=n.kids.slice().sort((a,b)=>String(a.key).localeCompare(String(b.key),"zh"));
+    const hideRows=AC_NO_ROWS.test(n.key);
     let body="";
-    if(n.rows.length)body+=acCatRows(n.rows,n.depth);
-    else if(!kids.length)body+='<div class="small" style="padding:2px 0 8px '+((n.depth-1)*20+24)+'px;color:var(--sub)">方案未列具体课程（按课组学分凑）</div>';
+    if(n.rows.length&&hideRows){
+      // 自由选课池：不逐门罗列，只说明「池子里有多少可选、要修多少分」
+      body+='<div class="small" style="padding:2px 0 8px '+((n.depth-1)*20+24)+'px;color:var(--sub)">'+
+        '课程池不固定，方案内共列 '+n.rows.length+' 门可选课，此处不逐门罗列；修满 '+(n.req||0)+' 学分即可</div>';
+    }else if(n.rows.length){
+      body+=acCatRows(n.rows,n.depth);
+    }else if(!kids.length){
+      body+='<div class="small" style="padding:2px 0 8px '+((n.depth-1)*20+24)+'px;color:var(--sub)">方案未列具体课程（按课组学分凑）</div>';
+    }
     kids.forEach(k=>{body+=renderNode(k)});
-    return acCatSec(n.key,n.depth,n.req,n.rows,body,kids.length?" ｜ 含子类":"");
+    let extra=(kids.length?" ｜ 含子类":"");
+    if(hideRows)extra+=" ｜ 自由选课，只看要求学分";
+    else if(AC_FREE_CAT.test(n.key))extra+=" ｜ 自由选课，学分达标即可（下方为方案列出的可选课）";
+    return acCatSec(n.key,n.depth,n.req,n.rows,body,extra);
   }
   const parts=[];
   cats.filter(c=>nodes[c.key].depth===1)
       .sort((a,b)=>String(a.key).localeCompare(String(b.key),"zh"))
-      .forEach(c=>{ if(skip(c.key))return; parts.push(renderNode(nodes[c.key])) });
+      .forEach(c=>{ parts.push(renderNode(nodes[c.key])) });
   /* 方案里归类不到任何类别的课程 */
   const rest=[];
   Object.keys(byCat).forEach(k=>{if(!inPlan(k))rest.push.apply(rest,byCat[k])});

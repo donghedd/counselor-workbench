@@ -120,16 +120,21 @@ var
   它占着 exe 让 Restart Manager 关不掉，安装就卡在「正在关闭应用程序…」，
   过一会儿弹出「安装程序无法自动关闭所有应用程序」，得手动点「重试」才能继续。
   这里直接在它之前静默结束同名进程，装机就不会停在那一步。
-  直接调 taskkill.exe（不经 cmd），中文进程名不会因代码页出错；没在运行也无害。 }
+  直接调 taskkill.exe（不经 cmd），中文进程名不会因代码页出错；没在运行也无害。
+
+  注意：**不能用 /T（结束进程树）**。应用内的「检查更新」是由主程序启动安装包，
+  安装包此时是「辅导员工作台.exe」的子进程，/T 会把安装包自己也一起杀掉——
+  表现就是点「立即更新」后窗口一闪、什么都没装。
+  /F /IM 按映像名就能把引导进程和应用进程都结束，不需要 /T。 }
 function InitializeSetup(): Boolean;
 var
   RC: Integer;
 begin
   Result := True;
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "{#AppExe}"',
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "{#AppExe}"',
        '', SW_HIDE, ewWaitUntilTerminated, RC);
   { 等文件句柄释放，避免紧接着的复制报「文件正在使用」 }
-  Sleep(800);
+  Sleep(1200);
 end;
 
 { 目标目录里已经有像样的学生数据吗？（表头之外还有行就算有） }

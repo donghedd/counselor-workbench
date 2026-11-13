@@ -205,9 +205,14 @@ def install_async(url, name="setup.exe"):
             if size < 1024 * 1024:
                 raise ValueError("下载文件异常（%d 字节）" % size)
             JOB.update(state="launching", pct=100, msg="下载完成，正在启动安装程序…")
-            # 让出锁：本进程稍后退出，安装程序接管文件替换
+            # 让出锁：本进程稍后退出，安装程序接管文件替换。
+            # 用 DETACHED_PROCESS 启动，安装包不挂在主程序的进程组里
+            # （安装脚本会 taskkill 掉「辅导员工作台.exe」，挂在一起容易被连带结束）。
+            flags = 0
+            if os.name == "nt":
+                flags = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
             subprocess.Popen([dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART"],
-                             close_fds=True)
+                             close_fds=True, creationflags=flags)
             JOB["state"] = "done"
             threading.Timer(2.5, lambda: os._exit(0)).start()
         except Exception as e:
