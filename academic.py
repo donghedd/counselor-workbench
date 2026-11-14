@@ -1086,7 +1086,11 @@ def analyze_grades(fname, data):
                 must_all = key.split(" > ")[0] in ("通识必修", "学科必修", "专业必修") \
                            or no_choice(major, key)
                 # 缺口取「命中的缺口组」（自身或最近祖先）的差值：
-                # 用祖先缺口限额时，列到凑够就停，不再把整组没修的课全列出来
+                # 用祖先缺口限额时，列到凑够就停，不再把整组没修的课全列出来。
+                # 注意必须按当前 key 重算命中缺口——此前误用了上面课程循环残留的
+                # hit（最后一个课号的命中），这里拿到的 gap 基本是 None，
+                # 「凑够即止」失效，missing 会把整组没修的课全列出来。
+                hit = _short_key_of(key, shortfall_keys)
                 gap = next((round(s2["req"] - s2["got"], 1) for s2 in short if s2["k"] == hit), None)
                 acc = 0.0
                 for x in sorted(items, key=lambda x: (x["_tk"], -x["pop"])):
@@ -1126,7 +1130,15 @@ def analyze_grades(fname, data):
             cands.sort(key=lambda x: (x["_ord"], x["_tk"]))
             acc = 0.0
             for x in cands:
-                unearned_c.append({k2: v for k2, v in x.items() if not k2.startswith("_")})
+                out = {k2: v for k2, v in x.items() if not k2.startswith("_")}
+                # 「限选类」课组（根类不是必修大类，且组内学分合计>要求学分）：
+                # 组内任修哪门都行，点到名的这门只是按修读热度给的推荐 →
+                # 前端在类别旁打 * 提示。挂科课必须本人重修，不算推荐。
+                if x["status"] == "未选课" \
+                        and x["cat"].split(" > ")[0] not in ("通识必修", "学科必修", "专业必修") \
+                        and not no_choice(major, x["cat"]):
+                    out["rec"] = True
+                unearned_c.append(out)
                 acc = round(acc + x["_cr"], 1)
                 if acc >= gap - 0.05:
                     break

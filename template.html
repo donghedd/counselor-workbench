@@ -1922,7 +1922,7 @@ function acBlock(sid){
   const UE=p.unearned||{g:[],c:[]};
   const ueRows=(UE.g||[]).map(s=>'<tr><td><b>'+esc(s.n)+'</b></td><td class="small">课程组</td><td><span class="tag tr">还差 '+s.short+' 学分</span>'+(s.req>s.got?' <span class="small">（要求 '+s.req+'，已得 '+s.got+' 学分'+(s.cnt?' · '+s.cnt+' 门课':'')+'）</span>':'')+'</td><td>'+s.req+'</td></tr>')
     .concat((UE.c||[]).map(c=>{
-      const leaf=String(c.cat||"").split(" > ").pop()||"—";
+      const leaf=(String(c.cat||"").split(" > ").pop()||"—")+(c.rec?" *":"");
       const st=String(c.status||"");
       const tag=st.indexOf("挂科")===0?'<span class="tag tr">'+esc(st)+'</span>'
         :(st.indexOf("待修")===0?'<span class="tag" style="background:var(--gray-bg);color:var(--sub)">'+esc(st)+'</span>'
@@ -1932,6 +1932,7 @@ function acBlock(sid){
   h+='<h4 style="margin:12px 0 4px">未获学分科目（截止目前应获未获）'+(ueRows.length?'（'+ueRows.length+'）':'')+'</h4>';
   h+=ueRows.length?'<table><tr><th>科目 / 课程组</th><th>类别</th><th>状态</th><th>学分</th></tr>'+ueRows.join("")+'</table>'
     :'<div class="small" style="margin:4px 0">已修满，无未获学分科目</div>';
+  if((UE.c||[]).some(c=>c.rec))h+='<div class="small" style="margin:4px 0">* 限选课组：修组内任意课程、凑够该组学分即可达标，点名课程只是按修读热度给的推荐。</div>';
   h+=sec("人工登记警示",["类型","级别","学期","原因","更新"],mw.map(r=>'<tr><td>'+esc(r["警示类型"])+'</td><td>'+esc(r["级别"])+'</td><td class="small">'+esc(r["学期"])+'</td><td class="small">'+esc(r["原因"])+'</td><td class="small">'+esc(r["更新时间"])+'</td></tr>'));
   if(EDIT)h+='<div style="margin-top:8px"><button class="btn" onclick="acWarnModal(\''+sid+'\')">新增/登记警示</button> <button class="btn" onclick="acImportModal(\'grades\')">重新导入成绩</button></div>';
   return h+'</div>';
@@ -2238,8 +2239,14 @@ const EXCEL_GROUPS=[
  {t:"推免",f:["推免_资格","推免_排名","推免_公示状态","推免_录取学校","推免_是否放弃","推免_材料状态"]},
  {t:"外住",f:["外住_类型","外住_原因","外住_起止日期","外住_审批状态","外住_地址","外住_紧急联系人","外住_安全告知"]},
  {t:"学业",f:["GPA","专业排名","备注"]},
- {t:"谈话跟进",f:["专业","学号","姓名","谈话时间","方式","内容"],sheet:2}
+ /* 谈话记录表的列名必须与 11_谈话跟进表.csv 完全一致（谈话方式/谈话内容），
+    否则服务端按真实列名过滤时会把这些勾选项丢掉，导出的表缺列 */
+ {t:"谈话跟进",f:["学号","姓名","谈话时间","谈话方式","谈话内容"],sheet:2}
 ];
+/* 谈话记录表的可选列（真实列名，记录ID/更新时间自动生成，不开放勾选） */
+const XLS_TALK_COLS=["学号","姓名","谈话时间","谈话方式","谈话内容"];
+/* 自动维护的列不列进可选清单 */
+const XLS_SKIP_COLS=["最后更新时间"];
 /* 「常用」集合：去掉当前已不展示/极少用的字段 */
 const XLS_COMMON_SKIP=["推免_资格","推免_排名","推免_公示状态","推免_录取学校","推免_是否放弃","推免_材料状态","就业_岗位","就业_签约日期","升学_复试面试时间","升学_材料齐全"];
 function filteredRows(){
@@ -2254,7 +2261,20 @@ function xlsFields(){const r=[];$$("#mbody .xp-f").forEach(c=>{if(c.checked)r.pu
 /* 第 2 个工作表（谈话记录）的列；全不勾 = 不生成该工作表 */
 function xlsTalkFields(){const r=[];$$("#mbody .xp-t").forEach(c=>{if(c.checked)r.push(c.value)});return r}
 function xlsGridHtml(){
+  /* 可选字段 = 学生主表里真实存在的列（+谈话记录表真实列），保证「勾选项 ↔ 实际列」一一对应；
+     EXCEL_GROUPS 只负责分组与顺序，分组里多出来的无效字段会被过滤掉，
+     主表里没归组的真实字段补到「其他（原有字段）」里，既不漏也不假。 */
+  let cols=(S[0]?Object.keys(S[0]):[]).filter(k=>k&&k!=="__row"&&XLS_SKIP_COLS.indexOf(k)<0);
+  if(!cols.length)cols=[].concat.apply([],EXCEL_GROUPS.filter(g=>!g.sheet).map(g=>g.f));
+  const usedS={},usedT={};
   const groups=EXCEL_GROUPS.map(g=>{
+    const pool=g.sheet?XLS_TALK_COLS:cols,used=g.sheet?usedT:usedS,keep=[];
+    (g.f||[]).forEach(f=>{if(pool.indexOf(f)>=0&&!used[f]){used[f]=1;keep.push(f)}});
+    return {t:g.t,f:keep,sheet:g.sheet,lock:g.lock};
+  }).filter(g=>g.f.length);
+  const rest=cols.filter(c=>!usedS[c]);
+  if(rest.length)groups.push({t:"其他（原有字段）",f:rest});
+  const html=groups.map(g=>{
     const cls=g.sheet?"xp-t":"xp-f";
     return '<div class="xls-g"><div class="gt">'+g.t+(g.sheet?'（sheet'+g.sheet+'）':'')+
       (g.sheet?'<span class="gt-sub">取消勾选则不含此工作表</span>':'')+'</div>'+
@@ -2263,7 +2283,7 @@ function xlsGridHtml(){
   }).join("");
   return '<div class="xls-sec"><b>选择列</b><span class="small">（学号、姓名固定包含，用于匹配学生）</span>'+
     '<span class="sp"><button class="btn" onclick="xlsSetAll(true,false)">全选</button><button class="btn" onclick="xlsSetAll(true,true)">常用</button><button class="btn" onclick="xlsSetAll(false,false)">清空</button></span></div>'+
-    '<div class="xls-grid">'+groups+'</div>';
+    '<div class="xls-grid">'+html+'</div>';
 }
 function pickFile(id){const f=document.getElementById(id);if(f)f.click()}
 function needEdit(){if(EDIT)return true;alert("该功能需要编辑模式：请用「启动编辑模式.bat」或双击 exe 打开看板");return false}

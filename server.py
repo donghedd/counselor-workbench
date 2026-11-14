@@ -293,8 +293,10 @@ def _talk_records():
 
 
 TALKS_SHEET = "谈话记录"
-TALKS_HEADER = ["专业", "学号", "姓名", "谈话时间", "方式", "内容"]
-TALKS_WIDTHS = [18, 16, 14, 20, 12, 64]
+# 谈话记录工作表的列必须是 11_谈话跟进表.csv 的真实列名（记录ID/更新时间自动生成，不参与导出勾选），
+# 否则导出的模板列和实际字段对不上（以前写「方式/内容」，导入时按真实列名匹配会被丢）
+TALKS_HEADER = ["学号", "姓名", "谈话时间", "谈话方式", "谈话内容"]
+TALKS_WIDTHS = [16, 14, 20, 12, 64]
 
 
 def build_export(obj):
@@ -354,12 +356,11 @@ def build_export(obj):
         enums = EXCEL_ENUMS.get(f) or (["齐全", "缺失", "待补充", "不适用"] if f in _MATERIAL_FIELDS else [])
         notes.append([f, "必填" if f in ("学号",) else "选填", FIELD_NOTES.get(f, "留空表示不修改该字段"), " / ".join(enums)])
     notes += [
-        ["专业", "选填", "谈话记录表：仅用于对照，导入时不写回（专业以学生主表为准）", ""],
         ["学号", "必填", "谈话记录表：按学号挂到学生名下；学号不存在则该条跳过", ""],
         ["姓名", "选填", "谈话记录表：留空自动取学生主表姓名", ""],
         ["谈话时间", "必填", "谈话记录表：如 2026-11-13 15:30，也支持 Excel 日期格式", "YYYY-MM-DD HH:MM"],
-        ["方式", "选填", "谈话记录表：面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他", "面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他"],
-        ["内容", "必填", "谈话记录表：本次谈话要点；同一学号 + 同一时间 + 相同内容视为重复，导入时跳过", ""],
+        ["谈话方式", "选填", "谈话记录表：面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他", "面谈 / 电话 / 微信 / QQ / 短信 / 线上会议 / 其他"],
+        ["谈话内容", "必填", "谈话记录表：本次谈话要点；同一学号 + 同一时间 + 相同内容视为重复，导入时跳过", ""],
     ]
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
@@ -380,11 +381,10 @@ def build_export(obj):
         twidth = dict(zip(TALKS_HEADER, TALKS_WIDTHS))
         talk_rows = []
         if not blank:
-            prof_of, name_of = {}, {}
+            name_of = {}
             for r in body:
                 s = str(r[idx["学号"]]).strip()
                 if s:
-                    prof_of[s] = str(r[idx["专业"]]).strip() if "专业" in idx else ""
                     name_of[s] = str(r[idx["姓名"]]).strip()
             want = None if not sids else set(str(s).strip() for s in sids)
             for t in _talk_records():
@@ -398,8 +398,8 @@ def build_export(obj):
                     for n in names:
                         if n and n in content:
                             content = content.replace(n, _mask_name(n))
-                rec = {"专业": prof_of.get(t["sid"], ""), "学号": sid_out, "姓名": nm,
-                       "谈话时间": t["when"], "方式": t["way"], "内容": content}
+                rec = {"学号": sid_out, "姓名": nm,
+                       "谈话时间": t["when"], "谈话方式": t["way"], "谈话内容": content}
                 talk_rows.append([rec.get(f, "") for f in torder])
         sheets.append({"name": TALKS_SHEET, "header": torder, "rows": talk_rows,
                        "widths": [twidth.get(f, 18) for f in torder]})
@@ -458,7 +458,7 @@ def _import_talks(up_header, up_rows, known_sids):
         if tgt:
             col.setdefault(tgt, h)
     if "学号" not in col or "谈话内容" not in col:
-        raise ValueError("「%s」工作表缺少「学号」或「内容」列" % TALKS_SHEET)
+        raise ValueError("「%s」工作表缺少「学号」或「谈话内容」列" % TALKS_SHEET)
 
     seen = set((tget(r, "学号"), _norm_talk_time(tget(r, "谈话时间")), tget(r, "谈话内容"))
                for r in t_rows)
