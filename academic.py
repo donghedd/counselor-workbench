@@ -1193,11 +1193,11 @@ def analyze_grades(fname, data):
             unearned_c.append({"n": f["n"], "cat": f["cat"], "status": "挂科 %s 分" % f["s"],
                                "t": f["t"], "c": f["c"]})
         unearned_g.sort(key=lambda x: -x["short"])
-        # 警示：三类，从重到轻 —— 退学警示 / 留级警示 / 学业警示
-        #   退学、留级：只看累计学分有没有达到该年级的学分线（学校的学业预警标准）
-        #   学业      ：按培养方案口径 —— 该修的课没修（应修未修），或挂了方案内的课
-        #               且这门课所属课组的学分还没凑够。课组学分已达标（例如文化素质类
-        #               用别的课补足了），那么这一门挂科不影响毕业，不予提醒。
+        # 警示：四类，从重到轻 —— 退学警示 / 留级警示 / 学业警示 / 课程警示
+        #   退学、留级、学业：都按「学业警示标准」的学年学分线对照有效学分判定
+        #   课程警示：有效学分没踩到学业警示线，但课有问题 —— 挂了方案内的课且
+        #             所属课组学分还没凑够，或应修未修。课组学分已达标（例如文化
+        #             素质类用别的课补足了）的挂科不影响毕业，不予提醒。
         warn = {"type": "", "level": "", "note": ""}
         failed_n = len(failed)
         # 第 6 学年及以上沿用第 5 学年标准（该年级只有退学线），避免高年级无标准可依
@@ -1219,8 +1219,11 @@ def analyze_grades(fname, data):
         elif valid is not None and th[1] is not None and valid < th[1]:
             warn["type"] = "留级警示"
             warn["level"] = "有效 %.1f 学分，低于留级线 %g 分（累计 %.1f）" % (valid, th[1], earned)
-        elif fail_short or missing:
+        elif valid is not None and th[0] is not None and valid < th[0]:
             warn["type"] = "学业警示"
+            warn["level"] = "有效 %.1f 学分，低于学业警示线 %g 分（累计 %.1f）" % (valid, th[0], earned)
+        elif fail_short or missing:
+            warn["type"] = "课程警示"
             bits = []
             if fail_short:
                 bits.append("挂科 %d 门" % len(fail_short))
@@ -1232,7 +1235,9 @@ def analyze_grades(fname, data):
             notes.insert(0, "有效学分 %.1f 低于 %g 分（退学警示线，累计 %.1f）" % (valid, th[2], earned))
         if valid is not None and th[1] is not None and valid < th[1]:
             notes.insert(0, "有效学分 %.1f 低于 %g 分（留级线，累计 %.1f）" % (valid, th[1], earned))
-        if warn["type"] == "学业警示" and not notes:
+        if valid is not None and th[0] is not None and warn["type"] == "学业警示":
+            notes.insert(0, "有效学分 %.1f 低于 %g 分（学业警示线，累计 %.1f）" % (valid, th[0], earned))
+        if warn["type"] == "课程警示" and not notes:
             todo = [f.get("n") for f in fail_short][:2] + [m.get("n") for m in missing][:2]
             todo = [t for t in todo if t]
             if todo:

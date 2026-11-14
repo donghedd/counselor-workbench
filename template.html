@@ -145,6 +145,7 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .ac-seg-i .n{font-size:12px;font-weight:600;padding:0 6px;border-radius:999px;background:var(--gray-bg);color:var(--gray)}
 .ac-seg-i.on{color:#fff;border-color:transparent;box-shadow:0 1px 4px rgba(15,25,50,.14)}
 .ac-seg-i.on .n{background:rgba(255,255,255,.26);color:#fff}
+.ac-seg-i[data-type="课程警示"].on{background:#5a7fa6}
 .ac-seg-i[data-type="学业警示"].on{background:#c8871a}
 .ac-seg-i[data-type="留级警示"].on{background:#d2642b}
 .ac-seg-i[data-type="退学警示"].on{background:#bd3b2f}
@@ -611,6 +612,7 @@ nav .tab.active + .subnav{display:flex}
               <div class="filters" style="align-items:center;flex-wrap:wrap">
                 <b>学业警示名单</b>
                 <div class="ac-seg" id="ac-type-seg">
+                  <button class="ac-seg-i" data-type="课程警示" onclick="acTypeToggle('课程警示')">课程警示<span class="n">0</span></button>
                   <button class="ac-seg-i" data-type="学业警示" onclick="acTypeToggle('学业警示')">学业警示<span class="n">0</span></button>
                   <button class="ac-seg-i" data-type="退学警示" onclick="acTypeToggle('退学警示')">退学警示<span class="n">0</span></button>
                   <button class="ac-seg-i" data-type="留级警示" onclick="acTypeToggle('留级警示')">留级警示<span class="n">0</span></button>
@@ -1643,7 +1645,7 @@ function acRows(){
     .sort((a,b)=>(b.fn||0)-(a.fn||0)||String(a.sid).localeCompare(String(b.sid)));
 }
 function acTypeCounts(){
-  const c={"学业警示":0,"退学警示":0,"留级警示":0};
+  const c={"课程警示":0,"学业警示":0,"退学警示":0,"留级警示":0};
   acAllRows().forEach(r=>{if(c[r.type]!==undefined)c[r.type]++});
   return c;
 }
@@ -1767,11 +1769,10 @@ function acThreshBox(){
   const DF={1:[30,25,15],2:[70,55,45],3:[110,85,75],4:[null,115,105],5:[null,null,135]};
   const g=(y,i)=>{const t=THRESH[String(y)]||DF[y]||[];const v=t[i];return (v!=null&&v!==undefined)?String(v):"—"};
   const row=(label,y,extra)=>'<tr><td>'+label+'</td><td>'+g(y,0)+'</td><td>'+g(y,1)+'</td><td>'+g(y,2)+(extra||"")+'</td></tr>';
-  box.innerHTML='<div class="filters" style="align-items:center"><b>学业警示标准</b><span class="small">按学年的学分线（学校学业预警标准）</span></div>'+
+  box.innerHTML='<div class="filters" style="align-items:center"><b>学业警示标准</b></div>'+
     '<table><tr><th>学年</th><th>学业警示线</th><th>留级线</th><th>退学线</th></tr>'+
     row("第 1 学年",1)+row("第 2 学年",2)+row("第 3 学年",3)+row("第 4 学年",4)+row("第 5 学年",5)+
-    '</table>'+
-    '<div class="small" style="margin-top:8px">判定口径：退学 / 留级按上表对照「有效学分」——培养方案内学分、每个课组封顶到该组要求（与教务「已修学分」口径一致）；「学业警示」按培养方案口径 —— 应修未修，或挂了方案内的课且所属课组学分还没凑够（课组学分已用别的课补足的不提醒）。修读第 6 学年及以上时沿用第 5 学年标准。</div>';
+    '</table>';
 }
 function renderAcPlans(){
   const box=$("#ac-plans");if(!box)return;
@@ -1934,7 +1935,7 @@ function acWarnModal(sid,id){
   if(!needEdit())return;
   const rec=id?ACWARN.find(r=>r["记录ID"]===id):null;
   const stu=sid?S.find(x=>x["学号"]===sid):null;
-  const types=["退学警示","留级警示","学业警示","学分预警","其他"];
+  const types=["退学警示","留级警示","学业警示","课程警示","学分预警","其他"];
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(rec?"编辑学业警示":"新增学业警示")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">人工登记的警示与自动分析结果合并展示（来源标为「手动」）。</div>'+
     '<div class="kv-form">'+
