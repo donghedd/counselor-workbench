@@ -510,7 +510,8 @@ nav .tab.active + .subnav{display:flex}
   <div class="side-foot">
     <div class="sf-t"><span class="sf-dot ro" id="sf-dot"></span><span id="sf-mode">只读模式</span></div>
     <div class="sf-t" style="margin-top:4px;font-weight:400"><span id="app-ver">v—</span>
-      <span style="color:#d5dbe6">·</span><a class="sf-link" id="upd-link" onclick="checkUpdate(true)">检查更新</a></div>
+      <span style="color:#d5dbe6">·</span><a class="sf-link" id="upd-link" onclick="checkUpdate(true)">检查更新</a>
+      <span style="color:#d5dbe6">·</span><a class="sf-link" onclick="mirrorModal()" title="GitHub 直连慢时可换加速镜像">下载源</a></div>
     <label class="sf-chk" title="打开软件时自动检查并安装新版本，装完自动重启">
       <input type="checkbox" id="auto-upd" onchange="toggleAutoUpdate(this)"> 启动时自动更新
     </label>
@@ -2709,11 +2710,13 @@ let UPD=null;
 /* 启动时自动更新开关（默认开）。真正干活的是启动页 boot.html：它先查一次更新，
    有新版就静默装完自动重启；这里的开关只是把设置写进 data/settings.json。 */
 let AUTO_UPD=true;
+let MIRRORS=[];   /* 下载源（加速镜像前缀），由 /api/update/config 填充 */
 async function loadUpdCfg(){
   try{
     const r=await fetch("/api/update/config");
     const j=await r.json();
     if(typeof j.autoUpdate==="boolean")AUTO_UPD=j.autoUpdate;
+    if(Array.isArray(j.mirrors))MIRRORS=j.mirrors;
   }catch(e){}
   const c=$("#auto-upd");if(c)c.checked=AUTO_UPD;
 }
@@ -2775,10 +2778,11 @@ async function doUpdate(){
     body:"将下载安装包并覆盖安装。\n\n· 本程序会自动关闭，装完自动重启到新版本\n· data / photos_src / 备份 目录不会被覆盖，学生数据保留"}))return;
   const bar=$("#upd-bar");
   bar.innerHTML='<span>正在下载 <b>v'+esc(UPD.latest)+'</b>…</span><span class="small" id="upd-pct">0%</span>'+
-    '<span class="sp"><span class="small" style="color:#5b6b86">下载期间请勿关闭窗口</span></span>';
+    '<span class="sp"><span class="small" id="upd-src" style="color:#5b6b86">准备中…</span></span>';
   try{
     const r=await fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url:UPD.asset.url,name:UPD.asset.name||"setup.exe",version:UPD.latest})});
+      body:JSON.stringify({url:UPD.asset.url,name:UPD.asset.name||"setup.exe",version:UPD.latest,
+        sha256:UPD.asset.sha256||"",size:UPD.asset.size||0})});
     const j=await r.json();
     if(!j.ok){showToast("启动更新失败："+(j.error||""),true);return}
   }catch(e){showToast("启动更新失败：未连接本地服务",true);return}
@@ -2786,6 +2790,8 @@ async function doUpdate(){
     try{
       const r=await fetch("/api/update/progress");const j=await r.json();
       const p=$("#upd-pct");if(p)p.textContent=(j.pct||0)+"%";
+      const s=$("#upd-src");
+      if(s&&j.src)s.textContent="源："+j.src+(j.msg&&j.msg.indexOf("换源")>=0?"（换源中）":"");
       if(j.state==="error"){
         clearInterval(t);showToast("更新失败："+(j.err||""),true);
         setTimeout(()=>location.reload(),1500);
@@ -2795,6 +2801,36 @@ async function doUpdate(){
       }
     }catch(e){clearInterval(t)}
   },600);
+}
+/* 下载源：GitHub 直连在国内时通时不通，更新包走加速镜像下载（镜像只是转发，包要做 sha256 校验）。
+   这里是「一行一个前缀」，留空 = 用内置的三个默认镜像；直连永远作为最后的兜底，不需要填。 */
+function mirrorModal(){
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>下载源（加速镜像）</h3>'+
+    '<div class="small" style="margin:-2px 0 10px">更新包默认从三个公开镜像下载，失败才回落 GitHub 直连。'+
+    '镜像只是为了加速，安装包会按 GitHub 给出的 sha256 校验，对不上就换源重下。<br>一行一个前缀（例如 <code>https://gh-proxy.com/</code>），'+
+    '<b>留空使用内置默认</b>；直连兜底不用填。</div>'+
+    '<div class="kv-form" style="grid-template-columns:1fr">'+
+      '<label>镜像前缀（每行一个）<textarea id="mir-in" rows="4" placeholder="https://gh-proxy.com/\nhttps://ghfast.top/">'+esc(MIRRORS.join("\n"))+'</textarea></label>'+
+    '</div>'+
+    '<div class="xls-row" style="margin-top:14px"><button class="btn primary" onclick="saveMirrors()">保存</button>'+
+    '<button class="btn" onclick="resetMirrors()">恢复默认</button>'+
+    '<button class="btn" onclick="closeModal()">取消</button></div>';
+  $("#mmask").style.display="block";
+}
+async function saveMirrors(){
+  const raw=(($("#mir-in")||{}).value||"").split("\n").map(s=>s.trim()).filter(Boolean);
+  await postMirrors(raw,"已保存下载源");
+}
+async function resetMirrors(){await postMirrors([],"已恢复内置默认下载源")}
+async function postMirrors(list,okMsg){
+  try{
+    const r=await fetch("/api/update/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mirrors:list})});
+    const j=await r.json();
+    if(!j.ok){showToast("保存失败："+(j.error||""),true);return}
+    MIRRORS=j.mirrors||[];
+    closeModal();showToast(okMsg);
+  }catch(e){showToast("保存失败：未连接本地服务",true)}
 }
 function repoModal(){
   const cur=(UPD&&UPD.repo)||"";

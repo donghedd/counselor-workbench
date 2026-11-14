@@ -45,7 +45,7 @@
 (function(){
   var msg=document.getElementById("msg"),bar=document.getElementById("bar"),
       fill=document.getElementById("fill"),pct=document.getElementById("pct"),
-      left=false, timer=null;
+      left=false, timer=null, UPD_VER="";
   function go(){
     if(left)return; left=true;
     if(timer)clearTimeout(timer);
@@ -73,16 +73,22 @@
       var p=j.pct||0;
       bar.classList.add("on"); fill.style.width=p+"%";
       pct.textContent=p+"%  ·  "+(j.size?( (j.done/1048576).toFixed(1)+" / "+(j.size/1048576).toFixed(1)+" MB"):"下载中");
+      // 下载还在往前走就别按 7 秒兜底跳走——换源重试时尤其需要多等一会儿
+      if(timer)clearTimeout(timer);
+      timer=setTimeout(go,60000);
+      if(j.src)setMsg("正在下载 <b>v"+(UPD_VER||"")+"</b>（源："+j.src+"）…");
       setTimeout(poll,500);
     }).catch(go);
   }
 
   fetch("/api/update/auto",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
     if(!j||!j.hasUpdate){go();return}
+    UPD_VER=j.latest||"";
     setMsg("发现新版本 <b>v"+(j.latest||"")+"</b>，正在下载安装包…");
     bar.classList.add("on");
     return fetch("/api/update/install",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url:(j.asset||{}).url,name:(j.asset||{}).name,version:j.latest})})
+      body:JSON.stringify({url:(j.asset||{}).url,name:(j.asset||{}).name,version:j.latest,
+        sha256:(j.asset||{}).sha256||"",size:(j.asset||{}).size||0})})
       .then(function(r){return r.json()}).then(function(k){
         if(!k||!k.ok){setMsg("启动更新失败，先打开当前版本");setTimeout(go,1500);return}
         if(timer)clearTimeout(timer);

@@ -1005,8 +1005,13 @@ def update_settings(obj):
         repo = updater.set_repo(obj.get("repo"), obj.get("token"))
     if "autoUpdate" in obj:
         updater.set_auto(bool(obj.get("autoUpdate")))
+    if "mirrors" in obj:
+        raw = obj.get("mirrors")
+        if isinstance(raw, str):
+            raw = raw.split(",")
+        updater.set_mirrors(raw if isinstance(raw, list) else [])
     return {"ok": True, "repo": repo or updater.get_repo(),
-            "autoUpdate": updater.auto_enabled()}
+            "autoUpdate": updater.auto_enabled(), "mirrors": updater.get_mirrors()}
 
 
 def update_install(obj):
@@ -1014,8 +1019,15 @@ def update_install(obj):
     url = str(obj.get("url") or "").strip()
     if not url.startswith("https://"):
         raise ValueError("下载地址无效")
+    sha = str(obj.get("sha256") or "").strip()
+    if sha and not re.match(r"^[0-9a-fA-F]{64}$", sha):
+        sha = ""
+    try:
+        size = int(obj.get("size") or 0)
+    except Exception:
+        size = 0
     ok = updater.install_async(url, str(obj.get("name") or "setup.exe"),
-                               str(obj.get("version") or ""))
+                               str(obj.get("version") or ""), sha, size)
     return {"ok": ok, "started": ok}
 
 

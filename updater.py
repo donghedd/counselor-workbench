@@ -10,6 +10,7 @@
 
 私有仓库可额外配置 token（可选，只读权限即可）；公开仓库留空就行。
 """
+import hashlib
 import json
 import os
 import re
@@ -31,8 +32,24 @@ SHIPPED = os.path.join(APP_HOME, "update.json")
 API = "https://api.github.com/repos/%s/releases/latest"
 UA = "CounselorWorkbench-Updater/1.0"
 TIMEOUT = 8
+TIMEOUT_DL = 20           # 下载时单次读取的超时：这么久没收到数据就当这个源卡住了
 CACHE_SEC = 1800          # 手动之外自动检查的缓存时间
 _cache = {"at": 0.0, "data": None}
+
+# ---------------------------------------------------------------- 下载源
+# GitHub 的 Release 文件在国内时通时不通（api 接口小、通常能过，卡的都是十几 MB 的安装包），
+# 所以下载时先走加速镜像、最后回落直连。镜像的用法就是「前缀 + 原始地址」，
+# 例如 https://gh-proxy.com/https://github.com/.../setup.exe。
+# 这些是公开免费服务，能不能用、快不快都不固定；侧栏「下载源」里可以改成自己的镜像。
+DEFAULT_MIRRORS = [
+    "https://gh-proxy.com/",
+    "https://ghfast.top/",
+    "https://ghproxy.net/",
+]
+# 慢源判定：开跑 8 秒还不到 256KB 就先换下一个源（否则一个 11KB/s 的源要下十几分钟）。
+# 所有源都失败时还会再来一轮「不限速」的重试，慢网络也能装完。
+SLOW_WINDOW = 8.0
+SLOW_BYTES = 256 * 1024
 
 # 自动更新的记忆文件：记录「上次自动装的是哪个版本」。
 # 万一某个版本装不上（下载被墙、安装包坏了），同版本 6 小时内不再自动重试，
@@ -41,7 +58,7 @@ STATE = os.path.join(DATA, "update_state.json")
 RETRY_GAP = 6 * 3600
 
 # 下载任务状态（/api/update/progress 轮询）
-JOB = {"state": "idle", "pct": 0, "msg": "", "size": 0, "done": 0, "err": ""}
+JOB = {"state": "idle", "pct": 0, "msg": "", "size": 0, "done": 0, "err": "", "src": ""}
 _job_lock = threading.Lock()
 
 
@@ -85,6 +102,57 @@ def auto_enabled():
     return True if v is None else bool(v)
 
 
+# ------------------------------------------------------------------ 下载源配置
+def _clean_mirror(p):
+    p = (p or "").strip()
+    if not p or p.startswith("#"):
+        return ""
+    if not re.match(r"^https?://", p):
+        p = "https://" + p
+    return p if p.endswith("/") else p + "/"
+
+
+def get_mirrors():
+    """加速镜像前缀列表（按顺序试）。来源：环境变量 > settings.json > update.json > 内置默认。"""
+    env = (os.environ.get("WORKBENCH_MIRRORS") or "").strip()
+    if env:
+        lst = [m for m in (_clean_mirror(x) for x in env.split(",")) if m]
+        if lst:
+            return lst
+    for src in (_load_json(SETTINGS), _load_json(SHIPPED)):
+        raw = src.get("mirrors")
+        if isinstance(raw, str):
+            raw = raw.split(",")
+        if isinstance(raw, list):
+            lst = [m for m in (_clean_mirror(x) for x in raw) if m]
+            if lst:
+                return lst
+    return list(DEFAULT_MIRRORS)
+
+
+def set_mirrors(lst):
+    """保存自定义镜像；传空列表表示恢复内置默认。返回生效的列表。"""
+    clean = [m for m in (_clean_mirror(x) for x in (lst or [])) if m]
+    cfg = _load_json(SETTINGS)
+    if clean:
+        cfg["mirrors"] = clean
+    else:
+        cfg.pop("mirrors", None)
+    _save_settings(cfg)
+    return clean or list(DEFAULT_MIRRORS)
+
+
+def _sources(url):
+    """把下载地址展开成「镜像 + 直连」的候选列表，直连永远排在最后兜底。"""
+    out = []
+    for m in get_mirrors():
+        if m and not url.startswith(m):
+            out.append((m.split("//", 1)[-1].rstrip("/") or m, m + url))
+    if not any(u == url for _, u in out):
+        out.append(("GitHub 直连", url))
+    return out
+
+
 def set_auto(flag):
     cfg = _load_json(SETTINGS)
     cfg["autoUpdate"] = bool(flag)
@@ -93,7 +161,8 @@ def set_auto(flag):
 
 
 def config():
-    return {"repo": get_repo(), "autoUpdate": auto_enabled(), "current": version.VERSION}
+    return {"repo": get_repo(), "autoUpdate": auto_enabled(),
+            "current": version.VERSION, "mirrors": get_mirrors()}
 
 
 def set_repo(repo, token=None):
@@ -170,6 +239,10 @@ def check(force=False):
                 "repo": repo, "error": "网络不可用：%s" % str(e)[:120]}
     tag = rel.get("tag_name") or ""
     asset = _pick_asset(rel.get("assets"))
+    # GitHub 的 Release 资产现在带 digest（形如 "sha256:..."），下载完用它校验：
+    # 镜像服务器只是转发，理论上能改包，对不上就直接丢弃、换下一个源。
+    digest = str((asset or {}).get("digest") or "")
+    sha = digest.split(":", 1)[1].strip() if digest.lower().startswith("sha256:") else ""
     out = {
         "ok": True,
         "current": version.VERSION,
@@ -183,6 +256,7 @@ def check(force=False):
         "asset": None if not asset else {
             "name": asset.get("name"), "size": asset.get("size"),
             "url": asset.get("browser_download_url"),
+            "sha256": sha,
         },
     }
     _cache.update(at=now, data=out)
@@ -220,23 +294,58 @@ def auto_check():
 
 
 # ------------------------------------------------------------------ 下载与安装
-def _download(url, dest, token=""):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def _fetch(src_url, dest, token="", strict=False):
+    """从单个源下载，返回 (字节数, sha256)。strict=慢源判定（前 8 秒没到 256KB 就放弃）。"""
+    req = urllib.request.Request(src_url, headers={"User-Agent": UA})
     if token:
         req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=30) as r, open(dest, "wb") as f:
+    h = hashlib.sha256()
+    got = 0
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=TIMEOUT_DL) as r, open(dest, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         JOB["size"] = total
-        got = 0
         while True:
             chunk = r.read(65536)
             if not chunk:
                 break
             f.write(chunk)
+            h.update(chunk)
             got += len(chunk)
             JOB["done"] = got
             JOB["pct"] = int(got * 100 / total) if total else 0
-    return got
+            if strict and got < SLOW_BYTES and time.time() - t0 > SLOW_WINDOW:
+                raise ValueError("这个源太慢（%.0f KB / %.0f 秒）" % (got / 1024.0, SLOW_WINDOW))
+    return got, h.hexdigest()
+
+
+def _download(url, dest, token="", sha="", size=0):
+    """按「镜像 → 直连」的顺序下载；大小不符或 sha256 不匹配就换下一个源。
+
+    两轮：第一轮带慢源判定（快速挑出能用的快源），全部失败后再来一轮不限速的，
+    照顾网络整体很慢的情况——大不了慢一点，但要能装上。
+    """
+    problems = {}
+    for strict in (True, False):
+        for label, src in _sources(url):
+            try:
+                JOB["msg"] = "正在下载…（%s）" % label
+                got, digest = _fetch(src, dest, token, strict)
+                if size and got != size:
+                    raise ValueError("大小不符（%d / %d 字节）" % (got, size))
+                if sha and digest.lower() != sha.lower():
+                    raise ValueError("sha256 校验不通过")
+                JOB["src"] = label
+                return got
+            except Exception as e:
+                problems[label] = str(e)[:60] or e.__class__.__name__
+                JOB["msg"] = "换源重试（%s 不行）…" % label
+                try:
+                    os.remove(dest)
+                except Exception:
+                    pass
+    detail = "；".join("%s：%s" % (k, v) for k, v in problems.items())
+    raise ValueError("所有下载源都失败 —— " + (detail or "未知原因"))
 
 
 def install_dir_arg(home=None):
@@ -256,12 +365,12 @@ def install_dir_arg(home=None):
     return ['/DIR="%s"' % h]
 
 
-def install_async(url, name="setup.exe", ver=""):
+def install_async(url, name="setup.exe", ver="", sha="", size=0):
     """后台下载 → 启动安装程序 → 退出本程序。返回是否成功启动任务。"""
     with _job_lock:
         if JOB["state"] == "downloading":
             return False
-        JOB.update(state="downloading", pct=0, msg="正在下载…", size=0, done=0, err="")
+        JOB.update(state="downloading", pct=0, msg="正在下载…", size=0, done=0, err="", src="")
 
     def work():
         try:
@@ -271,9 +380,9 @@ def install_async(url, name="setup.exe", ver=""):
             dest = os.path.join(tempfile.gettempdir(), "辅导员工作台-更新", fn)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             JOB["msg"] = "正在下载…"
-            size = _download(url, dest, get_token())
-            if size < 1024 * 1024:
-                raise ValueError("下载文件异常（%d 字节）" % size)
+            size_dl = _download(url, dest, get_token(), sha, size)
+            if size_dl < 1024 * 1024:
+                raise ValueError("下载文件异常（%d 字节）" % size_dl)
             JOB.update(state="launching", pct=100, msg="下载完成，正在启动安装程序…")
             # 让出锁：本进程稍后退出，安装程序接管文件替换。
             # 用 DETACHED_PROCESS 启动，安装包不挂在主程序的进程组里
