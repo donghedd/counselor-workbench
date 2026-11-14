@@ -145,7 +145,7 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .ac-seg-i .n{font-size:12px;font-weight:600;padding:0 6px;border-radius:999px;background:var(--gray-bg);color:var(--gray)}
 .ac-seg-i.on{color:#fff;border-color:transparent;box-shadow:0 1px 4px rgba(15,25,50,.14)}
 .ac-seg-i.on .n{background:rgba(255,255,255,.26);color:#fff}
-.ac-seg-i[data-type="课程警示"].on{background:#5a7fa6}
+.ac-seg-i[data-type="课程警示"].on{background:#3f7fc1}
 .ac-seg-i[data-type="学业警示"].on{background:#c8871a}
 .ac-seg-i[data-type="留级警示"].on{background:#d2642b}
 .ac-seg-i[data-type="退学警示"].on{background:#bd3b2f}
@@ -1703,7 +1703,7 @@ function acWarnTable(){
     rows.map(r=>'<tr onclick="stuDetail(\''+r.sid+'\')" style="cursor:pointer">'+
       '<td>'+esc(r.sid)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.cls)+'</td><td>'+(r.earned!==""&&r.earned!==undefined?r.earned:"—")+'</td><td>'+(r.valid!=null&&r.valid!==""?r.valid:"—")+'</td>'+
       '<td>'+(r.ue!==""&&r.ue!==undefined?(r.ue>0?'<span class="tag tr">'+r.ue+' 项</span>':'<span class="tag tg">0</span>'):"—")+'</td>'+
-      '<td>'+(r.type==="退学警示"?'<span class="tag tr" style="background:#f7c1c1;color:#791f1f">'+esc(r.type)+'</span>':r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
+      '<td>'+(r.type==="退学警示"?'<span class="tag tr" style="background:#f7c1c1;color:#791f1f">'+esc(r.type)+'</span>':r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="课程警示"?'<span class="tag tb">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
       '<td class="small" style="white-space:normal;max-width:330px">'+(r.lv?'<b>'+esc(r.lv)+'</b><br>':'')+esc(r.note||"—")+(r.fixN?' <span class="tag tg" title="已登记补考/重修结果">已跟进 '+r.fixN+'</span>':'')+'</td>'+
       (EDIT?'<td>'+(r.src==="自动"&&ASTU[r.sid]?'<button class="btn" onclick="event.stopPropagation();acFollowModal(\''+r.sid+'\')">成绩跟进</button>':'')+
         (r.id?' <button class="btn" onclick="event.stopPropagation();acWarnModal(\''+r.sid+'\',\''+r.id+'\')">编辑</button> <button class="btn danger" onclick="event.stopPropagation();acWarnDel(\''+r.id+'\',\''+esc(r.name)+'\')">删除</button>':'')+'</td>':'')+
@@ -1979,7 +1979,7 @@ function acBlock(sid){
     return '<h4 style="margin:10px 0 4px">'+title+'（'+rows.length+'）</h4><table><tr>'+cols.map(c=>'<th>'+c+'</th>').join("")+'</tr>'+rows.join("")+'</table>';
   };
   let h='<div class="talk-wrap" style="margin-top:10px"><div class="talk-h"><h3>学业情况</h3><span class="small">第 '+p.year+' 学年 ｜ 累计学分：'+p.earned+' ｜ 有效学分：'+(p.valid!=null?p.valid:"—")+'</span></div>';
-  if(p.warn&&p.warn.type)h+='<div style="margin:6px 0"><span class="tag tr">'+esc(p.warn.type)+'</span> <span class="small">'+esc(p.warn.level||"")+(p.warn.note?" · "+esc(p.warn.note):"")+'</span></div>';
+  if(p.warn&&p.warn.type)h+='<div style="margin:6px 0"><span class="tag '+(p.warn.type==="课程警示"?"tb":p.warn.type==="学业警示"?"ty":"tr")+'">'+esc(p.warn.type)+'</span> <span class="small">'+esc(p.warn.level||"")+(p.warn.note?" · "+esc(p.warn.note):"")+'</span></div>';
   const hasAny=(p.failed||[]).length||(p.missing||[]).length||(p.short||[]).length||mw.length;
   if(!hasAny){h+='<div class="small" style="margin:4px 0">截止目前没有未获学分的科目</div>'}
   const UE=p.unearned||{g:[],c:[]};
