@@ -343,6 +343,7 @@ td select.ed-sel{padding:2px 6px;border:1px solid var(--line);border-radius:6px;
 #mbody input.mv{width:100%;padding:5px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px;outline:none}
 #mbody input.mv:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(42,91,215,.12)}
 #mbody select.mv{width:100%;padding:5px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:#fff;outline:none}
+#mbody .mv.dirty{background:var(--yellow-bg);border-color:var(--yellow)}
 /* ---------- 谈话跟进 ---------- */
 .talk-wrap{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
 .talk-h{display:flex;align-items:center;gap:10px;margin-bottom:10px}
@@ -886,6 +887,7 @@ async function saveEdits(){
             pending++;
           }else{
             if(rec)rec[c]=it.cells[c];
+            if(DISK[t]&&DISK[t][it.row])DISK[t][it.row][c]=it.cells[c];   // 已写盘：基线跟上
             if(cur){delete cur[c];if(!Object.keys(cur).length)delete edits[t][it.row]}
             done++;
           }
@@ -921,6 +923,10 @@ function paintDirtyMarks(){
 }
 /* ---------- 索引 ---------- */
 TABLE_KEYS.forEach(k=>{if(Array.isArray(DATA[k]))DATA[k].forEach((r,i)=>r._i=i)});
+/* 磁盘基线：DATA 会被即时改动（含未保存的暂存值），判断「这一格相对 CSV 改没改」必须看基线。
+   保存成功后同步基线；页面重绘不影响它。 */
+const DISK={};TABLE_KEYS.forEach(k=>{DISK[k]={};(DATA[k]||[]).forEach((r,i)=>{DISK[k][i]=Object.assign({},r)})});
+const diskVal=(t,i,f)=>{const r=DISK[t]&&DISK[t][i];return r&&r[f]!=null?String(r[f]):""};
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const esc=v=>(v==null?"":String(v)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 /* ---------- 通用分页：各栏目独立记忆页码与每页条数 ---------- */
@@ -966,9 +972,9 @@ function pgSetSize(key,v){
 }
 function tag(txt){
   const t=String(txt);
-  const RED=["已退回","已过期","缺失","不通过","未落实","已取消","高","求职中","未签约"];
+  const RED=["已退回","已过期","已到期","缺失","不通过","未通过","未落实","取消","高","求职中","未签约"];
   const YEL=["待审核","申请中","进行中","待确认","待补充","中","未开始","待定"];
-  const GRN=["已通过","已认定","齐全","已完成","已落实","已关闭","低","有","是"];
+  const GRN=["已通过","已审批","已认定","齐全","已完成","已落实","已关闭","低","有","是"];
   if(RED.some(x=>t.includes(x)))return '<span class="tag tr">'+esc(t)+'</span>';
   if(GRN.some(x=>t===x))return '<span class="tag tg">'+esc(t)+'</span>';
   if(YEL.some(x=>t.includes(x)))return '<span class="tag ty">'+esc(t)+'</span>';
@@ -1080,11 +1086,13 @@ function destState(x){
   const adv=String(x["升学_结果状态"]||"").trim();   /* 源表此列是「是否已报名确认」，不等于录取 */
   const sign=String(x["就业_签约日期"]||"").trim(),tri=String(x["就业_三方合同状态"]||"").trim();
   const pub=String(x["推免_公示状态"]||"").trim(),adm=String(x["推免_录取学校"]||"").trim();
+  /* 三方合同算「已签」要排除否定：字符串「未签约」里含「签约」，不能直接 includes */
+  const triSigned=/已签|签约完成|已完成|签订/.test(tri)&&!/未签|待签|暂未|未完成/.test(tri);
   if(!d||d==="暂无"||conf==="待排查")return "u";
   if(conf==="已确认")return "a";
   if(/录取|拟录取|已上岸/.test(adv))return "a";
   if(/^保研|^推免/.test(d)&&(!_blank(pub)||!_blank(adm)))return "a";
-  if(/^就业|^自由职业/.test(d)&&(/^\d{4}[-/.]\d{1,2}/.test(sign)||/已签|签约|已完成/.test(tri)))return "a";
+  if(/^就业|^自由职业/.test(d)&&(/^\d{4}[-/.]\d{1,2}/.test(sign)||triSigned))return "a";
   return "b";
 }
 function renderDepart(){
@@ -1133,10 +1141,12 @@ function edMini(t,i,c,val){
 }
 function toggleTodo(i,on){
   const rec=DATA.todos&&DATA.todos[i];if(!rec||!EDIT)return;
-  if(rec._st0===undefined)rec._st0=String(rec["状态"]||"");
+  /* 基线取磁盘值（保存后会跟着更新），不能用「第一次点勾时的值」——
+     那样保存后再取消勾选，会误判成「改回原值」而把修改撤掉 */
+  const base=diskVal("todos",i,"状态");
   const v=on?"已完成":"未开始";
   rec["状态"]=v;
-  if(v===rec._st0){
+  if(v===base){
     if(edits.todos[i]){delete edits.todos[i]["状态"];if(!Object.keys(edits.todos[i]).length)delete edits.todos[i]}
   }else{edits.todos[i]=edits.todos[i]||{};edits.todos[i]["状态"]=v}
   /* 只改这一行的样式，不重排列表：勾完后仍在原位，不会跳到别的页 */
@@ -1353,7 +1363,8 @@ kpi("#kpi-grad",[
 /*bars("#gi-bars",...) 已随面板移除*/
 /* ---------- 毕业班：按去向 / 按班级 × 列表 / 照片 ---------- */
 const DESTS=["考研","保研","留学","就业","考公考编","自由职业","暂无"];
-S.forEach(x=>{x._dest=x["毕业去向"]||"暂无"});
+/* 去向一律实时取「毕业去向」：原来在加载时把值缓存进 x._dest，保存后看板分组和人数不跟着变 */
+const destOf=x=>String(x["毕业去向"]||"").trim()||"暂无";
 /* 寝室分组：寝室号形如 13-319（楼栋-房号），房号首位=楼层；外住学生仍按原寝室归楼，无有效寝室号者归"待核对" */
 S.forEach(x=>{
   const m=/^(\d+)-(\d+)$/.exec(String(x["寝室号"]||"").trim());
@@ -1384,7 +1395,7 @@ function renderChips(){
   if(gcat!=="room"){fbox.style.display="none";fbox.innerHTML=""}
   if(gcat==="dest"){
     box.innerHTML=DESTS.map(d=>{
-      const n=cnt(S,x=>x._dest===d);
+      const n=cnt(S,x=>destOf(x)===d);
       if(!n)return "";
       return '<div class="chip'+(d==="暂无"?" gray":"")+(gsel===d?" active":"")+'" data-v="'+d+'">'+d+'<span class="n">'+n+'</span></div>';
     }).join("");
@@ -1451,7 +1462,7 @@ function renderCatTable(rows){
   let hdr,tr;
   if(mode==="shengxue"){
     hdr=["学号","姓名","班级","去向","报考/录取学校","结果状态","复试时间","材料","确认状态"];
-    tr=x=>'<tr onclick="stuDetail(\''+x["学号"]+'\')" style="cursor:pointer"><td>'+esc(x["学号"])+'</td><td><b>'+esc(x["姓名"])+'</b></td><td>'+esc(x["班级"])+'</td><td>'+tag(x["毕业去向"]||x._dest)+'</td><td>'+esc(x["升学_报考学校"]||"待补充")+'</td><td>'+tag(x["升学_结果状态"]||"待补充")+'</td><td>'+esc(x["升学_复试面试时间"])+'</td><td>'+tag(x["升学_材料齐全"])+'</td><td>'+tag(x["去向确认状态"])+'</td></tr>';
+    tr=x=>'<tr onclick="stuDetail(\''+x["学号"]+'\')" style="cursor:pointer"><td>'+esc(x["学号"])+'</td><td><b>'+esc(x["姓名"])+'</b></td><td>'+esc(x["班级"])+'</td><td>'+tag(destOf(x))+'</td><td>'+esc(x["升学_报考学校"]||"待补充")+'</td><td>'+tag(x["升学_结果状态"]||"待补充")+'</td><td>'+esc(x["升学_复试面试时间"])+'</td><td>'+tag(x["升学_材料齐全"])+'</td><td>'+tag(x["去向确认状态"])+'</td></tr>';
   }else if(mode==="jiuye"){
     hdr=["学号","姓名","班级","单位名称","岗位","地区","签约日期","三方/合同","确认状态"];
     tr=x=>'<tr onclick="stuDetail(\''+x["学号"]+'\')" style="cursor:pointer"><td>'+esc(x["学号"])+'</td><td><b>'+esc(x["姓名"])+'</b></td><td>'+esc(x["班级"])+'</td><td>'+esc(x["就业_单位名称"]||"待补充")+'</td><td>'+esc(x["就业_岗位"])+'</td><td>'+esc(x["就业_地区"])+'</td><td>'+esc(x["就业_签约日期"])+'</td><td>'+tag(x["就业_三方合同状态"])+'</td><td>'+tag(x["去向确认状态"])+'</td></tr>';
@@ -1504,7 +1515,7 @@ function syncViewSegs(){
 }
 function renderCat(){
   syncViewSegs();
-  let rows=gcat==="dest"?S.filter(x=>x._dest===gsel):gcat==="room"?floorRows():S.filter(x=>x["班级"]===gsel);
+  let rows=gcat==="dest"?S.filter(x=>destOf(x)===gsel):gcat==="room"?floorRows():S.filter(x=>x["班级"]===gsel);
   if(gcat==="room")rows=rows.slice().sort((a,b)=>((a._room||"zzz").localeCompare(b._room||"zzz"))||a["姓名"].localeCompare(b["姓名"],"zh"));
   let html="",pager="";
   if(gcat==="room"&&gsex!=="unk"){
@@ -1995,11 +2006,13 @@ classes.forEach(c=>$("#f-class").insertAdjacentHTML("beforeend",'<option>'+esc(c
 renderChips();renderCat();
 if(!anyPhoto()){$$("#p-grad .seg").forEach(b=>{if(b.dataset.view==="photo")b.style.display="none"})}
 /* 外住看板：点行看详情，编辑模式下可直接跳到编辑 */
-/* 外住审批状态三档筛选：已通过 / 待审批 / 未通过（已到期、已过期视为失效→未通过） */
+/* 外住审批状态三档筛选：已通过 / 待审批 / 未通过（到期、过期视为失效→未通过）。
+   必须先判负向：字符串「未通过」里含「通过」，先判正向会把它算成已通过 */
 let wzF="";
 const WZ_BUCKET=s=>{s=String(s||"").trim();
-  if(/已通过|已审批|通过/.test(s))return "已通过";
-  if(/已退回|不通过|驳回|过期|到期/.test(s))return "未通过";
+  if(!s)return "待审批";
+  if(/退回|驳回|不通过|未通过|过期|到期/.test(s))return "未通过";
+  if(/已通过|已审批|^通过$/.test(s))return "已通过";
   return "待审批"};
 function setWzF(v){wzF=v||"";pgReset("waizhu");renderWaizhu()}
 const WZ_COLS=["13","8","12","9","10","22","9","8","9"];
@@ -2194,11 +2207,6 @@ function editStudent(sid){
   if(hasWaizhu(x))rest=rest.concat(["材料_外住审批表","材料_安全承诺书"]);
   if(d!=="自由职业")rest.push("备注");
   const wzOn=hasWaizhu(x);
-  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>编辑：'+esc(x["姓名"])+'（'+esc(x["学号"])+'）</h3><div class="small" style="margin-bottom:8px">改动先暂存（标黄），页面下方会出现「保存 / 取消」；保存后写回 CSV 并重建看板。字段按「毕业去向」自动显示：考研/保研 → 报考学校、报考结果；就业/考公考编 → 单位名称、就业地区、三方合同状态；自由职业 → 具体去向。外住不是去向——用「是否外住」按钮控制外住登记字段。下拉框为固定枚举，请勿自由填写状态。</div>'+
-    '<div class="kv" style="grid-template-columns:150px 1fr">'+base.map(fld).join("")+
-    '<div class="k">是否外住</div><div><button class="btn" style="padding:3px 14px'+(wzOn?';background:var(--green);color:#fff':'')+'" onclick="setWzEdit(true)">是</button> <button class="btn" style="padding:3px 14px'+(wzOn?'':';background:var(--gray-bg)')+'" onclick="setWzEdit(false)">否</button> <span class="small">选「是」展开外住登记字段；不需要登记时选「否」收起（已有数据不会被删除）</span></div>'+
-    '<div id="wz-edit" style="display:'+(wzOn?"contents":"none")+'">'+wzFields.map(fld).join("")+'</div>'+
-    dest.map(fld).join("")+rest.map(fld).join("")+'</div>';
   const allFields=base.concat(dest,wzFields,rest);
   /* 切换去向时，被隐藏字段的暂存修改一并撤销，避免写回看不见的字段
      （值为空串的暂存保留：那是"主动清空"，如考研/保研清空待办事项） */
@@ -2207,14 +2215,27 @@ function editStudent(sid){
     Object.keys(st).forEach(f=>{if(allFields.indexOf(f)<0&&String(st[f])!=="")delete st[f]});
     if(!Object.keys(st).length)delete edits.students[x._i];
   }
-  const orig={};allFields.forEach(f=>orig[f]=x[f]==null?"":String(x[f]));
+  const pendNow=edits.students[x._i]||{},pendNames=Object.keys(pendNow);
+  const pendTip=pendNames.length?('<div class="small" style="margin:-2px 0 8px;color:var(--yellow)">该生有 <b>'+pendNames.length+'</b> 处修改还没写进表格：'+pendNames.slice(0,8).map(esc).join("、")+(pendNames.length>8?"…":"")+'（输入框标黄）。点页面下方「保存」才生效，关掉弹窗不会丢。</div>'):"";
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>编辑：'+esc(x["姓名"])+'（'+esc(x["学号"])+'）</h3><div class="small" style="margin-bottom:8px">改动先暂存（输入框标黄），页面下方会出现「保存 / 取消」；保存后写回 CSV 并重建看板。字段按「毕业去向」自动显示：考研/保研 → 报考学校、报考结果；就业/考公考编 → 单位名称、就业地区、三方合同状态；自由职业 → 具体去向。外住不是去向——用「是否外住」按钮控制外住登记字段。下拉框为固定枚举，请勿自由填写状态；把某一格改回原值即视为撤销这处修改。</div>'+pendTip+
+    '<div class="kv" style="grid-template-columns:150px 1fr">'+base.map(fld).join("")+
+    '<div class="k">是否外住</div><div><button class="btn" style="padding:3px 14px'+(wzOn?';background:var(--green);color:#fff':'')+'" onclick="setWzEdit(true)">是</button> <button class="btn" style="padding:3px 14px'+(wzOn?'':';background:var(--gray-bg)')+'" onclick="setWzEdit(false)">否</button> <span class="small">选「是」展开外住登记字段；不需要登记时选「否」收起（已有数据不会被删除）</span></div>'+
+    '<div id="wz-edit" style="display:'+(wzOn?"contents":"none")+'">'+wzFields.map(fld).join("")+'</div>'+
+    dest.map(fld).join("")+rest.map(fld).join("")+'</div>';
+  /* 基线取磁盘值，不取内存值：内存里可能已经有未保存的暂存值，
+     拿它当基线会让「重开编辑器」看不出未保存，取消后界面与 CSV 也对不上 */
+  const orig={};allFields.forEach(f=>orig[f]=diskVal("students",x._i,f));
+  /* 已有暂存的字段标出来，别让人以为已经保存过了 */
+  pendNames.forEach(f=>{const el=$("#mbody").querySelector('.mv[data-f="'+f+'"]');if(el)el.classList.add("dirty")});
   $("#mbody").querySelectorAll(".mv").forEach(el=>el.addEventListener("change",()=>{
     const f=el.dataset.f,v=el.value.trim();
     x[f]=v;
     if(v===orig[f]){
       if(edits.students[x._i]){delete edits.students[x._i][f];if(!Object.keys(edits.students[x._i]).length)delete edits.students[x._i]}
+      el.classList.remove("dirty");
     }else{
       edits.students[x._i]=edits.students[x._i]||{};edits.students[x._i][f]=v;
+      el.classList.add("dirty");
     }
     refreshSaveBar();
     /* 改了「毕业去向」→ 立即按新去向重排字段（如 就业→保研），并保留滚动位置 */

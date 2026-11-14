@@ -21,6 +21,18 @@ INDEX = os.path.join(HERE, "photo_index.json")
 PORT = int(os.environ.get("WORKBENCH_PORT") or 8787)
 THUMB_MAX = 460
 
+# 学号要拼进文件名（photos\<学号>.jpg），只允许这几种字符：
+# 否则请求里传 "../..\xxx" 就能把文件写到照片目录之外。
+RE_SID = re.compile(r"^[0-9A-Za-z_-]{1,40}$")
+
+
+def safe_sid(v):
+    """校验并返回可安全拼进文件名的学号；不合法直接抛 ValueError。"""
+    s = str(v or "").strip()
+    if not RE_SID.match(s):
+        raise ValueError("学号不合法（只允许数字、字母、下划线，最长 40 位）：%s" % s[:40])
+    return s
+
 
 def _img_kind(b):
     """按文件头判断真实格式，用于给出比「读取失败」更有用的提示"""
@@ -46,6 +58,10 @@ def _img_kind(b):
 
 def save_thumb_bytes(raw, sid):
     """任意常见格式 → 摆正 → 460px 白底 JPG；返回 (ok, 提示)"""
+    try:
+        sid = safe_sid(sid)
+    except ValueError as e:
+        return False, str(e)
     if not raw:
         return False, "文件是空的（0 字节）"
     if Image is None:
@@ -1109,7 +1125,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 ln = int(self.headers.get("Content-Length", 0))
                 obj = json.loads(self.rfile.read(ln).decode("utf-8"))
-                sid = str(obj["sid"])
+                sid = safe_sid(obj.get("sid"))
                 data = obj["data"]
                 if "," in data:
                     data = data.split(",", 1)[1]

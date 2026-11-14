@@ -980,7 +980,9 @@ def analyze_grades(fname, data):
                 if old is None or ft > (_term_key(old["t"]) or (0, 0)):
                     keep[nn] = f
             failed = sorted(keep.values(), key=lambda f: (_term_key(f["t"]) or (0, 0)), reverse=True)
-        earned = round(sum(passed_best.values()), 1)
+        # 累计学分：按归口课号去重（hit_best 的 key），和类别学分同一口径。
+        # 不能按实际课号累加 passed_best——「方案课 + 替代课」都通过时同一门课会被算两次。
+        earned = round(sum(credit for credit, _ in hit_best.values()), 1)
         # 类别学分累计（按归口课号：替代/认定过的课算到方案内那门课上，同一门课只计一次）
         catEarned = collections.defaultdict(float)
         catCount = collections.defaultdict(int)   # 同一课组已修门数（界面标「已得 X 学分 · N 门」，防把学分看成门数）

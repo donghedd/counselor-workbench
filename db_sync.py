@@ -37,26 +37,56 @@ def read_csv(fn):
     return rd[0], rd[1:]
 
 
+def check_header(fn, header):
+    """表头体检：重复列名 / 空表头会让 CREATE TABLE 失败，
+    而重建表时旧表已经被拆掉（DDL 在 sqlite 里默认自动提交，回滚不了）。
+    所以先体检，有问题直接报错，数据库一个字节都不动。"""
+    seen, dup = {}, []
+    for h in header:
+        k = str(h).strip()
+        if not k:
+            raise ValueError("%s：有空表头列（第 %d 列），请先在 Excel 里补上列名再重跑"
+                             % (fn, header.index(h) + 1))
+        if k in seen:
+            dup.append(k)
+        seen[k] = 1
+    if dup:
+        raise ValueError("%s：表头有重复列名（%s），建表会失败；"
+                         "常见原因是 Excel 里复制粘贴多出一列，改好后重跑。数据库未改动。"
+                         % (fn, "、".join(dup)))
+
+
 def csv2db(only_keys=None):
+    todo = [(key, fn, tn) for key, fn, tn in TABLES if not only_keys or key in only_keys]
+    # 先全部体检，再动数据库：避免前几张表建成、后面失败，留下半套数据
+    for key, fn, tn in todo:
+        header, _ = read_csv(fn)
+        if header:
+            check_header(fn, header)
     con = sqlite3.connect(DB)
+    con.isolation_level = None      # 自己管事务：显式 BEGIN 后 DDL 也受事务保护，失败能整体回滚
     cur = con.cursor()
     n = 0
-    for key, fn, tn in TABLES:
-        if only_keys and key not in only_keys:
-            continue
+    for key, fn, tn in todo:
         header, rows = read_csv(fn)
         if not header:
             continue
-        cur.execute("DROP TABLE IF EXISTS %s" % q(tn))
         cols = ", ".join("%s TEXT" % q(h) for h in header)
-        cur.execute("CREATE TABLE %s (%s)" % (q(tn), cols))
         ph = ", ".join("?" * len(header))
         # 行长度对齐
         norm = [(r + [""] * len(header))[: len(header)] for r in rows]
-        cur.executemany("INSERT INTO %s VALUES (%s)" % (q(tn), ph), norm)
+        cur.execute("BEGIN IMMEDIATE")
+        try:
+            cur.execute("DROP TABLE IF EXISTS %s" % q(tn))
+            cur.execute("CREATE TABLE %s (%s)" % (q(tn), cols))
+            cur.executemany("INSERT INTO %s VALUES (%s)" % (q(tn), ph), norm)
+            cur.execute("COMMIT")
+        except Exception:
+            cur.execute("ROLLBACK")     # 旧表原样保留
+            con.close()
+            raise
         n += len(norm)
         print("  → %s：%d 行" % (tn, len(norm)))
-    con.commit()
     con.close()
     print("csv2db 完成，共 %d 行 → %s" % (n, DB))
 
@@ -76,11 +106,14 @@ def db2csv():
             continue
         header = [d[0] for d in cur.description]
         rows = cur.fetchall()
-        with open(os.path.join(DATA, fn), "w", encoding="utf-8-sig", newline="") as f:
+        p = os.path.join(DATA, fn)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f)
             w.writerow(header)
             for r in rows:
                 w.writerow(["" if v is None else str(v) for v in r])
+        os.replace(tmp, p)      # 写完才替换，中途失败不会留下半截 CSV
         n += len(rows)
         print("  → %s：%d 行" % (fn, len(rows)))
     con.close()
