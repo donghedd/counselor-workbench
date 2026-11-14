@@ -1764,7 +1764,7 @@ function acThreshBox(){
   box.innerHTML='<div style="margin:4px 0 8px"><b>学业预警标准（按学年的学分线）</b></div>'+
     '<table><tr><th>学年</th><th>学业警示线</th><th>留级线</th><th>退学线</th></tr>'+
     row("第 1 学年",1)+row("第 2 学年",2)+row("第 3 学年",3)+row("第 4 学年",4)+row("第 5 学年",5)+
-    '<tr><td>第 6 学年及以上</td><td>—</td><td>—</td><td>'+g(5,2)+'（沿用第 5 学年）</td></tr></table>'+
+    '</table>'+
     '<div class="small" style="margin-top:8px">判定口径：退学 / 留级按上表对照「有效学分」——培养方案内学分、每个课组封顶到该组要求（与教务「已修学分」口径一致）；「学业警示」按培养方案口径 —— 应修未修，或挂了方案内的课且所属课组学分还没凑够（课组学分已用别的课补足的不提醒）。修读第 6 学年及以上时沿用第 5 学年标准。</div>';
 }
 function renderAcPlans(){
