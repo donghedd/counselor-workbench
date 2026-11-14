@@ -635,6 +635,7 @@ nav .tab.active + .subnav{display:flex}
                 </span>
               </div>
               <div id="ac-plans"></div>
+              <div id="ac-thresh" style="margin-top:16px"></div>
             </div>
           </div>
         </div>
@@ -870,10 +871,14 @@ async function saveEdits(){
   if(!Object.keys(snap).length){showToast("没有需要保存的修改",true);return}
   const btn=$("#save-btn"),txt=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="保存中…"}
+  /* 「在校学年」变了服务端会重跑成绩分析并重建看板，但本页内嵌的还是旧分析——
+     这种保存成功后整页刷新，让学业情况/警示直接按新学年显示 */
+  const yearSaved=(snap.students||[]).some(it=>it.cells&&Object.prototype.hasOwnProperty.call(it.cells,"在校学年"));
   try{
     const r=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(snap)});
     const j=await r.json();
     if(!j.ok){showToast("保存失败："+(j.error||"未知错误"),true);return}
+    if(yearSaved){showToast("已保存，正在按新学年重算学业情况…");setTimeout(()=>location.reload(),600);return}
     /* 只清理「已确认写入磁盘」的格子；保存期间又被改过的，内存保留新值、继续待保存 */
     let done=0,pending=0;
     Object.keys(snap).forEach(t=>{
@@ -1750,8 +1755,21 @@ function acCatSec(key,depth,req,rows,body,extra){
       '<span class="pc-caret">▼</span><b>'+esc(name)+'</b><span class="small">'+meta+'</span></div>'+
     (body?'<div class="plan-body">'+body+'</div>':'')+'</div>';
 }
+/* 学业预警标准（学校按学年定的学分线）：退学/留级按「有效学分」对照本表判定 */
+function acThreshBox(){
+  const box=$("#ac-thresh");if(!box)return;
+  const DF={1:[30,25,15],2:[70,55,45],3:[110,85,75],4:[null,115,105],5:[null,null,135]};
+  const g=(y,i)=>{const t=THRESH[String(y)]||DF[y]||[];const v=t[i];return (v!=null&&v!==undefined)?String(v):"—"};
+  const row=(label,y,extra)=>'<tr><td>'+label+'</td><td>'+g(y,0)+'</td><td>'+g(y,1)+'</td><td>'+g(y,2)+(extra||"")+'</td></tr>';
+  box.innerHTML='<div style="margin:4px 0 8px"><b>学业预警标准（按学年的学分线）</b></div>'+
+    '<table><tr><th>学年</th><th>学业警示线</th><th>留级线</th><th>退学线</th></tr>'+
+    row("第 1 学年",1)+row("第 2 学年",2)+row("第 3 学年",3)+row("第 4 学年",4)+row("第 5 学年",5)+
+    '<tr><td>第 6 学年及以上</td><td>—</td><td>—</td><td>'+g(5,2)+'（沿用第 5 学年）</td></tr></table>'+
+    '<div class="small" style="margin-top:8px">判定口径：退学 / 留级按上表对照「有效学分」——培养方案内学分、每个课组封顶到该组要求（与教务「已修学分」口径一致）；「学业警示」按培养方案口径 —— 应修未修，或挂了方案内的课且所属课组学分还没凑够（课组学分已用别的课补足的不提醒）。修读第 6 学年及以上时沿用第 5 学年标准。</div>';
+}
 function renderAcPlans(){
   const box=$("#ac-plans");if(!box)return;
+  acThreshBox();
   const majors=Object.keys(ACPL);
   const delBtn=$("#ac-plan-del");if(delBtn)delBtn.style.display=(EDIT&&majors.length)?"inline-block":"none";
   const mbox=$("#ac-plan-majors");
@@ -1954,7 +1972,7 @@ function acBlock(sid){
     if(!rows||!rows.length)return empty||"";
     return '<h4 style="margin:10px 0 4px">'+title+'（'+rows.length+'）</h4><table><tr>'+cols.map(c=>'<th>'+c+'</th>').join("")+'</tr>'+rows.join("")+'</table>';
   };
-  let h='<div class="talk-wrap" style="margin-top:10px"><div class="talk-h"><h3>学业情况</h3><span class="small">第 '+p.year+' 学年 ｜ 累计学分：'+p.earned+' ｜ 有效学分：'+(p.valid!=null?p.valid:"—")+(ANA.source?' ｜ 数据：'+esc(ANA.source):"")+'</span></div>';
+  let h='<div class="talk-wrap" style="margin-top:10px"><div class="talk-h"><h3>学业情况</h3><span class="small">第 '+p.year+' 学年 ｜ 累计学分：'+p.earned+' ｜ 有效学分：'+(p.valid!=null?p.valid:"—")+'</span></div>';
   if(p.warn&&p.warn.type)h+='<div style="margin:6px 0"><span class="tag tr">'+esc(p.warn.type)+'</span> <span class="small">'+esc(p.warn.level||"")+(p.warn.note?" · "+esc(p.warn.note):"")+'</span></div>';
   const hasAny=(p.failed||[]).length||(p.missing||[]).length||(p.short||[]).length||mw.length;
   if(!hasAny){h+='<div class="small" style="margin:4px 0">截止目前没有未获学分的科目</div>'}
@@ -2217,7 +2235,7 @@ function editStudent(sid){
   }
   const pendNow=edits.students[x._i]||{},pendNames=Object.keys(pendNow);
   const pendTip=pendNames.length?('<div class="small" style="margin:-2px 0 8px;color:var(--yellow)">该生有 <b>'+pendNames.length+'</b> 处修改还没写进表格：'+pendNames.slice(0,8).map(esc).join("、")+(pendNames.length>8?"…":"")+'（输入框标黄）。点页面下方「保存」才生效，关掉弹窗不会丢。</div>'):"";
-  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>编辑：'+esc(x["姓名"])+'（'+esc(x["学号"])+'）</h3><div class="small" style="margin-bottom:8px">改动先暂存（输入框标黄），页面下方会出现「保存 / 取消」；保存后写回 CSV 并重建看板。字段按「毕业去向」自动显示：考研/保研 → 报考学校、报考结果；就业/考公考编 → 单位名称、就业地区、三方合同状态；自由职业 → 具体去向。外住不是去向——用「是否外住」按钮控制外住登记字段。下拉框为固定枚举，请勿自由填写状态；把某一格改回原值即视为撤销这处修改。</div>'+pendTip+
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>编辑：'+esc(x["姓名"])+'（'+esc(x["学号"])+'）</h3>'+pendTip+
     '<div class="kv" style="grid-template-columns:150px 1fr">'+base.map(fld).join("")+
     '<div class="k">是否外住</div><div><button class="btn" style="padding:3px 14px'+(wzOn?';background:var(--green);color:#fff':'')+'" onclick="setWzEdit(true)">是</button> <button class="btn" style="padding:3px 14px'+(wzOn?'':';background:var(--gray-bg)')+'" onclick="setWzEdit(false)">否</button> <span class="small">选「是」展开外住登记字段；不需要登记时选「否」收起（已有数据不会被删除）</span></div>'+
     '<div id="wz-edit" style="display:'+(wzOn?"contents":"none")+'">'+wzFields.map(fld).join("")+'</div>'+
