@@ -55,6 +55,34 @@ RE_NAME = re.compile(r"^[\u4e00-\u9fa5A-Za-z0-9（）()\-·ⅠⅡⅢⅣ／/ ]{2,
 MULTI_MARK = re.compile(r"^\((?:多选|单选)\d\)")
 
 YEAR_THRESHOLDS = {1: (30, 25, 15), 2: (70, 55, 45), 3: (110, 85, 75), 4: (None, 115, 105), 5: (None, None, 135)}
+
+
+def _valid_credits(plan, catEarned):
+    """有效学分：培养方案内、按课组封顶后计入的学分（警示判定用）。
+
+    规则：每个课组获得的有效学分不超过该组的要求学分——
+      * 学科交叉要求 2 分、实修 8 分，只计 2 分；
+      * 父组要求恰好等于子组要求之和时按子组各自封顶（四史类 2 分修了 4 分只算 2）；
+      * 否则按父组总额封顶（文化素质类 8 分，其子类只有"艺术类 1 分"这类下限，
+        不能拿子类下限当总额）。
+    方案外课程不进课组，天然不计入有效学分。
+    """
+    reqs = {c["key"]: c["req"] for c in (plan.get("cats") or [])}
+    if not reqs:
+        return None          # 没有培养方案：不参与学分警示（否则 0 分会被判退学）
+    kids = collections.defaultdict(list)
+    for k in reqs:
+        if " > " in k:
+            kids[k.rsplit(" > ", 1)[0]].append(k)
+
+    def eff(k):
+        req = reqs.get(k, 0.0)
+        sub = [c for c in kids.get(k, []) if reqs.get(c, 0) > 0]
+        if sub and abs(sum(reqs[c] for c in sub) - req) <= 0.05:
+            return sum(eff(c) for c in sub)
+        return min(catEarned.get(k, 0.0), req)
+
+    return round(sum(eff(k) for k in reqs if " > " not in k), 1)
 GRADED_TOPS = ("通识必修", "学科必修", "专业必修", "通识限选", "专业限选", "学科交叉课组")
 # 自由选课凑学分课组（挂科不强制重修、应修未修不点名具体课程、只查课组总学分）
 FLEX_GROUPS = ("文化素质类-计科", "外语基础课组I类", "外语拓展课组I类", "学科交叉课组", "艺术类")
@@ -1009,6 +1037,8 @@ def analyze_grades(fname, data):
                 catCount[" > ".join(cat[:i])] += 1
         # 方案缺口（叶子层）
         reqs = {c["key"]: c["req"] for c in plan.get("cats", [])}
+        # 有效学分：方案内按课组封顶（多修不虚增），警示线按这个判
+        valid = _valid_credits(plan, catEarned)
         en_credits = round(en_credits, 1)
         cg_leaf = set()
         for _ps in cg.values():
@@ -1183,12 +1213,12 @@ def analyze_grades(fname, data):
         # 方案内仍未拿到的课：挂了、且所属课组仍处于缺口状态
         short_keys = {s["k"] for s in short}
         fail_short = [f for f in failed if _short_hit(f.get("cat"), short_keys)]
-        if th[2] is not None and earned < th[2]:
+        if valid is not None and th[2] is not None and valid < th[2]:
             warn["type"] = "退学警示"
-            warn["level"] = "累计 %.1f 学分，低于退学线 %g 分" % (earned, th[2])
-        elif th[1] is not None and earned < th[1]:
+            warn["level"] = "有效 %.1f 学分，低于退学线 %g 分（累计 %.1f）" % (valid, th[2], earned)
+        elif valid is not None and th[1] is not None and valid < th[1]:
             warn["type"] = "留级警示"
-            warn["level"] = "累计 %.1f 学分，低于留级线 %g 分" % (earned, th[1])
+            warn["level"] = "有效 %.1f 学分，低于留级线 %g 分（累计 %.1f）" % (valid, th[1], earned)
         elif fail_short or missing:
             warn["type"] = "学业警示"
             bits = []
@@ -1198,10 +1228,10 @@ def analyze_grades(fname, data):
                 bits.append("应修未修 %d 门" % len(missing))
             warn["level"] = " · ".join(bits)
         # 学分缺口照旧写进说明（表格"说明"列会显示）
-        if th[2] is not None and earned < th[2]:
-            notes.insert(0, "累计学分 %.1f 低于 %g 分（退学警示线）" % (earned, th[2]))
-        if th[1] is not None and earned < th[1]:
-            notes.insert(0, "累计学分 %.1f 低于 %g 分（留级线）" % (earned, th[1]))
+        if valid is not None and th[2] is not None and valid < th[2]:
+            notes.insert(0, "有效学分 %.1f 低于 %g 分（退学警示线，累计 %.1f）" % (valid, th[2], earned))
+        if valid is not None and th[1] is not None and valid < th[1]:
+            notes.insert(0, "有效学分 %.1f 低于 %g 分（留级线，累计 %.1f）" % (valid, th[1], earned))
         if warn["type"] == "学业警示" and not notes:
             todo = [f.get("n") for f in fail_short][:2] + [m.get("n") for m in missing][:2]
             todo = [t for t in todo if t]
@@ -1213,7 +1243,7 @@ def analyze_grades(fname, data):
         warn["note"] = "；".join(notes)
         per[sid] = {
             "name": stu.get("姓名", ""), "major": major, "class": stu.get("班级", ""),
-            "year": yv, "earned": earned,
+            "year": yv, "earned": earned, "valid": valid,
             "yearAuto": max(1, cur[0] - entry + 1), "yearManual": yv_manual,
             "failed": failed, "missing": missing, "extra": extra,
             "short": short,

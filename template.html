@@ -1624,7 +1624,7 @@ let acTypesF=[],acClassF="";
 PG_DRAW["ac-warn"]=()=>acWarnTable();
 function acAllRows(){
   const rows=[];
-  Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)rows.push({sid:sid,name:p.name||nameOfSid(sid),cls:p.class||(S.find(x=>x["学号"]===sid)||{})["班级"]||"",year:p.year,earned:p.earned,fn:(p.failed||[]).length,mn:(p.missing||[]).length,ue:(p.unearned?(((p.unearned.g||[]).length)+((p.unearned.c||[]).length)):((p.failed||[]).length+(p.missing||[]).length)),type:p.warn.type,lv:p.warn.level||"",note:p.warn.note||"",src:"自动",id:"",fixN:(p.fix||[]).length})});
+  Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)rows.push({sid:sid,name:p.name||nameOfSid(sid),cls:p.class||(S.find(x=>x["学号"]===sid)||{})["班级"]||"",year:p.year,earned:p.earned,valid:p.valid,fn:(p.failed||[]).length,mn:(p.missing||[]).length,ue:(p.unearned?(((p.unearned.g||[]).length)+((p.unearned.c||[]).length)):((p.failed||[]).length+(p.missing||[]).length)),type:p.warn.type,lv:p.warn.level||"",note:p.warn.note||"",src:"自动",id:"",fixN:(p.fix||[]).length})});
   ACWARN.forEach(r=>rows.push({sid:r["学号"],name:r["姓名"]||nameOfSid(r["学号"]),cls:(S.find(x=>x["学号"]===r["学号"])||{})["班级"]||"",year:"",earned:"",fn:"",mn:"",type:r["警示类型"]||"学业警示",lv:"",note:(r["级别"]?"["+r["级别"]+"] ":"")+(r["原因"]||"")+(r["学期"]?"（"+r["学期"]+"）":""),src:"手动",id:r["记录ID"]}));
   return rows;
 }
@@ -1666,11 +1666,11 @@ function renderAcademic(){
   const anaN=Object.keys(ASTU).length;
   const stuOf=rows=>rows.map(r=>{const x=S.find(s=>s["学号"]===r.sid)||{};return Object.assign({},x,{"学业说明":r.note||""})});
   const auto=acRows();
-  const fRows=auto.filter(r=>r.fn),mRows=Object.keys(ASTU).filter(sid=>(ASTU[sid].missing||[]).length).map(sid=>({sid:sid,note:(ASTU[sid].missing||[]).slice(0,3).map(m=>m.n).join("、")})),cRows=Object.keys(ASTU).filter(sid=>{const p=ASTU[sid];const th=THRESH[String(p.year)]||[];return th[1]&&p.earned<th[1]}).map(sid=>({sid:sid,note:"累计 "+ASTU[sid].earned+" 学分（修读第 "+ASTU[sid].year+" 学年，留级线 "+THRESH[String(ASTU[sid].year)][1]+"）"}));
+  const fRows=auto.filter(r=>r.fn),mRows=Object.keys(ASTU).filter(sid=>(ASTU[sid].missing||[]).length).map(sid=>({sid:sid,note:(ASTU[sid].missing||[]).slice(0,3).map(m=>m.n).join("、")})),cRows=Object.keys(ASTU).filter(sid=>{const p=ASTU[sid];const th=THRESH[String(p.year)]||[];return th[1]&&p.valid!=null&&p.valid<th[1]}).map(sid=>({sid:sid,note:"有效 "+ASTU[sid].valid+" 学分（修读第 "+ASTU[sid].year+" 学年，留级线 "+THRESH[String(ASTU[sid].year)][1]+"，累计 "+ASTU[sid].earned+"）"}));
   kpi("#kpi-study",[
     {v:fRows.length,l:"挂科学生",c:"r",on:()=>stuOf(fRows),ext:{key:"学业说明",label:"警示说明"}},
     {v:mRows.length,l:"有应修未修课程",c:"y",on:()=>stuOf(mRows),ext:{key:"学业说明",label:"未修课程(前3门)"}},
-    {v:cRows.length,l:"累计学分低于留级线",c:"r",on:()=>stuOf(cRows),ext:{key:"学业说明",label:"说明"}},
+    {v:cRows.length,l:"有效学分低于留级线",c:"r",on:()=>stuOf(cRows),ext:{key:"学业说明",label:"说明"}},
     {v:acWarnStudents.size,l:"学业警示总人数",c:"b",on:()=>stuOf(auto),ext:{key:"学业说明",label:"警示说明"}},
     {v:anaN?S.length-anaN:0,l:"无成绩记录",c:"y",on:()=>S.filter(x=>!ASTU[x["学号"]]),ext:{key:"待办事项",label:"待办事项"}},
     {v:Object.keys(ACPL).length,l:"已导入培养方案",c:"g"}
@@ -1686,9 +1686,9 @@ function acWarnTable(){
   const pager=pgBar("ac-warn",all.length,"条",10);
   const pg=$("#ac-warn-pager");if(pg)pg.innerHTML=pager;
   $("#ac-warn-table").innerHTML=rows.length?
-    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>未获学分科目</th><th>警示类型</th><th>说明</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
+    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>有效学分</th><th>未获学分科目</th><th>警示类型</th><th>说明</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
     rows.map(r=>'<tr onclick="stuDetail(\''+r.sid+'\')" style="cursor:pointer">'+
-      '<td>'+esc(r.sid)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.cls)+'</td><td>'+(r.earned!==""?r.earned:"—")+'</td>'+
+      '<td>'+esc(r.sid)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.cls)+'</td><td>'+(r.earned!==""&&r.earned!==undefined?r.earned:"—")+'</td><td>'+(r.valid!=null&&r.valid!==""?r.valid:"—")+'</td>'+
       '<td>'+(r.ue!==""&&r.ue!==undefined?(r.ue>0?'<span class="tag tr">'+r.ue+' 项</span>':'<span class="tag tg">0</span>'):"—")+'</td>'+
       '<td>'+(r.type==="退学警示"?'<span class="tag tr" style="background:#f7c1c1;color:#791f1f">'+esc(r.type)+'</span>':r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
       '<td class="small" style="white-space:normal;max-width:330px">'+(r.lv?'<b>'+esc(r.lv)+'</b><br>':'')+esc(r.note||"—")+(r.fixN?' <span class="tag tg" title="已登记补考/重修结果">已跟进 '+r.fixN+'</span>':'')+'</td>'+
@@ -1831,7 +1831,7 @@ function acImportModal(kind){
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(isPlan?"导入培养方案":"导入全校成绩")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">'+(isPlan?
       '上传「2023级xx主修培养方案--方案内表现课程信息.xlsx」类型的文件（文件名需含“xx主修培养方案”），系统自动识别专业、解析类别学分要求与方案内课程。<b>一个专业只保留一份方案</b>：该专业已有方案时不能直接覆盖，需先在方案卡片上点「删除方案」，删除后再导入新文件。':
-      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格，方案内已挂课程全部列出）、应修未修（逐门核对培养方案里列出的课程：没修 / 没通过就点名；文化素质类与学科交叉课组只核对学分缺口）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期成绩还没出的算在修，已出分且不及格的按挂科计。')+'</div>'+
+      '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格，方案内已挂课程全部列出）、应修未修（逐门核对培养方案里列出的课程：没修 / 没通过就点名；文化素质类与学科交叉课组只核对学分缺口）、学科交叉（培养方案外课程）、累计学分与有效学分（有效学分按课组封顶，用于退学/留级判定）。当前学期成绩还没出的算在修，已出分且不及格的按挂科计。')+'</div>'+
     '<div class="drop" id="ac-drop"><div class="dz-t">把 xlsx 文件拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'ac-file\')">选择文件…</button>'+
       '<div class="dz-s">仅支持 .xlsx</div></div>'+
@@ -1954,7 +1954,7 @@ function acBlock(sid){
     if(!rows||!rows.length)return empty||"";
     return '<h4 style="margin:10px 0 4px">'+title+'（'+rows.length+'）</h4><table><tr>'+cols.map(c=>'<th>'+c+'</th>').join("")+'</tr>'+rows.join("")+'</table>';
   };
-  let h='<div class="talk-wrap" style="margin-top:10px"><div class="talk-h"><h3>学业情况</h3><span class="small">第 '+p.year+' 学年 ｜ 累计 '+p.earned+' 学分'+(ANA.source?' ｜ 数据：'+esc(ANA.source):"")+'</span></div>';
+  let h='<div class="talk-wrap" style="margin-top:10px"><div class="talk-h"><h3>学业情况</h3><span class="small">第 '+p.year+' 学年 ｜ 累计学分：'+p.earned+' ｜ 有效学分：'+(p.valid!=null?p.valid:"—")+(ANA.source?' ｜ 数据：'+esc(ANA.source):"")+'</span></div>';
   if(p.warn&&p.warn.type)h+='<div style="margin:6px 0"><span class="tag tr">'+esc(p.warn.type)+'</span> <span class="small">'+esc(p.warn.level||"")+(p.warn.note?" · "+esc(p.warn.note):"")+'</span></div>';
   const hasAny=(p.failed||[]).length||(p.missing||[]).length||(p.short||[]).length||mw.length;
   if(!hasAny){h+='<div class="small" style="margin:4px 0">截止目前没有未获学分的科目</div>'}
@@ -2845,7 +2845,7 @@ function acFollowModal(sid){
     '<div class="empty">该生当前没有挂科课程。若需修改「应修未修 / 课组缺口」，请调整培养方案或导入最新成绩。</div>';
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>成绩跟进 · '+esc(p.name||stu["姓名"]||sid)+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">学号 '+esc(sid)+' ｜ 班级 '+esc(p.class||stu["班级"]||"—")+
-    ' ｜ 累计学分 '+(p.earned!==undefined?p.earned:"—")+
+    ' ｜ 累计学分 '+(p.earned!==undefined?p.earned:"—")+' ｜ 有效学分 '+(p.valid!=null?p.valid:"—")+
     ' ｜ 警示 '+(p.warn&&p.warn.type?esc(p.warn.type):"无")+
     '<br>登记补考/重修结果后，系统把该课视为已通过，学分与挂科自动重算；原始成绩文件不会被改动，可随时撤销。</div>'+
     body+extraHtml+

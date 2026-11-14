@@ -979,7 +979,8 @@ def academic_follow(obj):
     return {"ok": True, "record": rec, "analyzed": bool(ana),
             "student": None if not stu else {
                 "failed": len([f for f in stu.get("failed", []) if not f.get("flex")]),
-                "earned": stu.get("earned"), "warn": (stu.get("warn") or {}).get("type") or ""}}
+                "earned": stu.get("earned"), "valid": stu.get("valid"),
+                "warn": (stu.get("warn") or {}).get("type") or ""}}
 
 
 def _current_analysis():
