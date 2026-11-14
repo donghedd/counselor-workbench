@@ -239,6 +239,23 @@ def _download(url, dest, token=""):
     return got
 
 
+def install_dir_arg(home=None):
+    """更新时要不要指定安装目录。
+
+    跟随当前程序所在目录（手工装到 D 盘、绿色版解压目录都能装回原处，data 就在 exe 旁边）；
+    但当前目录在临时目录里时不传——那是解压/测试目录，装回去等于「更新永远装在临时目录」，
+    就是 2.1.14 修掉的老 bug。
+    """
+    h = os.path.abspath(home or APP_HOME)
+    tmp = os.path.abspath(tempfile.gettempdir())
+    if h.lower() == tmp.lower() or h.lower().startswith(tmp.lower() + os.sep):
+        return []
+    # 只认「像工作台目录」的位置（带 data）：有人把 exe 单独拖到桌面，别把整套装到桌面上
+    if not os.path.isdir(os.path.join(h, "data")):
+        return []
+    return ['/DIR="%s"' % h]
+
+
 def install_async(url, name="setup.exe", ver=""):
     """后台下载 → 启动安装程序 → 退出本程序。返回是否成功启动任务。"""
     with _job_lock:
@@ -261,15 +278,17 @@ def install_async(url, name="setup.exe", ver=""):
             # 让出锁：本进程稍后退出，安装程序接管文件替换。
             # 用 DETACHED_PROCESS 启动，安装包不挂在主程序的进程组里
             # （安装脚本会 taskkill 掉「辅导员工作台.exe」，挂在一起容易被连带结束）。
-            # 装到哪个目录交给安装脚本自己决定（固定为 %LOCALAPPDATA%\Programs\辅导员工作台，
-            # 且 UsePreviousAppDir=no）；这里不传 /DIR，避免把“当前运行的目录”当成安装目标——
-            # 程序万一跑在临时目录里，就会一直更新到临时目录去，版本永远不变。
+            # 装到哪个目录：默认按安装脚本的固定位置（%LOCALAPPDATA%\Programs\辅导员工作台）。
+            # 但如果当前程序跑在别处（手工装到 D 盘、绿色版解压目录），必须传 /DIR 装回原目录，
+            # 否则更新的程序会落在默认目录、打开是空数据（data 就在 exe 旁边）。
+            # 唯一例外是临时目录：程序跑在 %TEMP%\wb_test_* 这类目录时不能装回去，
+            # 否则又会回到「更新一直装进临时目录、版本永远不变」的老 bug。
             # /LOG 留一份安装日志，下次再出问题可以直接看。
             logf = os.path.join(os.path.dirname(dest), "install.log")
             # /RELAUNCH=1：装完自动把新版拉起来（安装脚本里对应的 [Run] 项）。
             # 不加这个，静默装完程序就没了，用户还得自己再点一次图标。
             args = [dest, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART",
-                    "/RELAUNCH=1", "/LOG=" + logf]
+                    "/RELAUNCH=1", "/LOG=" + logf] + install_dir_arg()
             flags = 0
             if os.name == "nt":
                 flags = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP

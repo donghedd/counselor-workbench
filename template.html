@@ -861,29 +861,63 @@ function refreshAfterSave(){
 }
 async function saveEdits(){
   if(!editCount()){showToast("没有需要保存的修改",true);return}
-  const payload={};
-  for(const t of TABLE_KEYS){const m=edits[t];const items=Object.entries(m).map(([row,cells])=>({row:+row,cells}));
-    if(items.length)payload[t]=items;}
+  /* 提交快照：请求发出后用户再改的格子属于「下一批」，不能被这次的回写冲掉 */
+  const snap={};
+  for(const t of TABLE_KEYS){const m=edits[t];
+    const items=Object.entries(m).map(([row,cells])=>({row:+row,cells:Object.assign({},cells)}));
+    if(items.length)snap[t]=items;}
+  if(!Object.keys(snap).length){showToast("没有需要保存的修改",true);return}
   const btn=$("#save-btn"),txt=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.textContent="保存中…"}
   try{
-    const r=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const r=await fetch("/api/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(snap)});
     const j=await r.json();
-    if(j.ok){
-      const n=editCount();
-      /* 就地更新内存数据并清除修改标记，不弹窗打断、不强制刷新、不跳回首页 */
-      for(const t of Object.keys(payload))payload[t].forEach(it=>{if(DATA[t]&&DATA[t][it.row])Object.assign(DATA[t][it.row],it.cells)});
-      TABLE_KEYS.forEach(k=>edits[k]={});
-      $$(".dirty").forEach(el=>el.classList.remove("dirty"));
-      refreshSaveBar();
-      refreshAfterSave();
-      showToast("保存成功：已写入 "+n+" 处修改");
-    }
-    else{showToast("保存失败："+(j.error||"未知错误"),true);if(btn){btn.disabled=false;btn.textContent=txt}}
+    if(!j.ok){showToast("保存失败："+(j.error||"未知错误"),true);return}
+    /* 只清理「已确认写入磁盘」的格子；保存期间又被改过的，内存保留新值、继续待保存 */
+    let done=0,pending=0;
+    Object.keys(snap).forEach(t=>{
+      const rows=DATA[t]||[];
+      snap[t].forEach(it=>{
+        const rec=rows[it.row],cur=edits[t]&&edits[t][it.row];
+        Object.keys(it.cells).forEach(c=>{
+          const newer=(cur&&Object.prototype.hasOwnProperty.call(cur,c))?String(cur[c]):null;
+          if(newer!==null&&newer!==String(it.cells[c])){
+            if(rec)rec[c]=cur[c];
+            pending++;
+          }else{
+            if(rec)rec[c]=it.cells[c];
+            if(cur){delete cur[c];if(!Object.keys(cur).length)delete edits[t][it.row]}
+            done++;
+          }
+        });
+      });
+    });
+    syncDirtyMarks();
+    refreshSaveBar();
+    refreshAfterSave();
+    paintDirtyMarks();
+    showToast("保存成功：已写入 "+done+" 处修改"+
+      (pending?"；另有 "+pending+" 处在保存期间被改动，请再点一次「保存」":""));
   }catch(err){
     showToast("保存失败（未连接本地编辑服务，请用「启动编辑模式.bat」或双击 exe 打开）："+err,true);
-    if(btn){btn.disabled=false;btn.textContent=txt}
+  }finally{
+    /* 成功/失败都要恢复按钮，否则第二次保存点不动 */
+    if(btn){btn.disabled=false;btn.textContent=txt||"保存"}
   }
+}
+/* 待保存标记跟 edits 对齐：已清掉的格子去掉标黄，仍待保存的保留 */
+function syncDirtyMarks(){
+  $$(".dirty").forEach(el=>{
+    const t=el.dataset.t,i=el.dataset.i,c=el.dataset.c,rec=edits[t]&&edits[t][i];
+    if(!rec||!Object.prototype.hasOwnProperty.call(rec,c))el.classList.remove("dirty");
+  });
+}
+/* 重绘表格后（redraw 会丢 class）按 edits 重新标黄，别让「还没保存」的格子变回正常样式 */
+function paintDirtyMarks(){
+  $$("td.ed[data-t],select.ed-sel[data-t]").forEach(el=>{
+    const t=el.dataset.t,i=el.dataset.i,c=el.dataset.c,rec=edits[t]&&edits[t][i];
+    el.classList.toggle("dirty",!!(rec&&Object.prototype.hasOwnProperty.call(rec,c)));
+  });
 }
 /* ---------- 索引 ---------- */
 TABLE_KEYS.forEach(k=>{if(Array.isArray(DATA[k]))DATA[k].forEach((r,i)=>r._i=i)});
@@ -1785,7 +1819,7 @@ function acImportModal(kind){
   const isPlan=kind==="plan";
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(isPlan?"导入培养方案":"导入全校成绩")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">'+(isPlan?
-      '上传「2023级xx主修培养方案--方案内表现课程信息.xlsx」类型的文件（文件名需含“xx主修培养方案”），系统自动识别专业、解析类别学分要求与方案内课程，同名专业自动覆盖更新，人工调整过的学分要求会保留。':
+      '上传「2023级xx主修培养方案--方案内表现课程信息.xlsx」类型的文件（文件名需含“xx主修培养方案”），系统自动识别专业、解析类别学分要求与方案内课程。<b>一个专业只保留一份方案</b>：该专业已有方案时不能直接覆盖，需先在方案卡片上点「删除方案」，删除后再导入新文件。':
       '上传「全校成绩查询」xlsx，自动按学号匹配学生并生成学业分析：挂科（成绩低于60分或不及格，方案内已挂课程全部列出）、应修未修（逐门核对培养方案里列出的课程：没修 / 没通过就点名；文化素质类与学科交叉课组只核对学分缺口）、学科交叉（培养方案外课程）、累计学分与退学/留级/学业警示。当前学期成绩还没出的算在修，已出分且不及格的按挂科计。')+'</div>'+
     '<div class="drop" id="ac-drop"><div class="dz-t">把 xlsx 文件拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'ac-file\')">选择文件…</button>'+
@@ -1832,7 +1866,7 @@ async function doAcademicImport(inp,kind){
       '<div class="xls-row" style="margin-top:12px"><button class="btn primary" onclick="location.reload()">刷新查看</button><button class="btn" onclick="acImportModal(\''+kind+'\')">再导入一次</button></div>';
   }catch(err){
     if(log)log.innerHTML='<div class="small" style="margin-top:12px;color:var(--red)">导入失败：'+esc(String(err.message||err))+'</div>'+
-      '<div class="small" style="color:var(--sub)">培养方案文件名需含「xx主修培养方案」；成绩文件需包含 学号/课程名/课程号/学年学期/总成绩/学分 等列。</div>';
+      '<div class="small" style="color:var(--sub)">培养方案文件名需含「xx主修培养方案」，且同一专业已有方案时需先「删除方案」；成绩文件需包含 学号/课程名/课程号/学年学期/总成绩/学分 等列。</div>';
   }
 }
 /* 调整培养方案学分要求 */

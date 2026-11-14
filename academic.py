@@ -435,12 +435,22 @@ def load_plans():
 def save_plan(fname, data):
     plan = parse_plan(fname, data)
     plans = load_plans()
-    old = plans["majors"].get(plan["major"], {})
-    for c in plan["cats"]:
-        for oc in old.get("cats", []):
-            if oc["key"] == c["key"] and oc.get("reqOverride"):
-                c["req"] = oc["req"]
-                c["reqOverride"] = True
+    old = plans["majors"].get(plan["major"]) or {}
+    # 不允许覆盖已导入的方案：同一专业（本工具按专业存一份，不分年级）已存在时必须先删除，
+    # 避免「上传错文件/解析失败的文件」把好方案悄悄换成空方案。
+    if plans["majors"].get(plan["major"]):
+        raise ValueError(
+            "「%s」已导入过培养方案（%s级，%s 导入），不能重复导入；"
+            "请先在「培养方案」卡片上点「删除方案」，确认删除后再导入新文件。"
+            % (plan["major"], old.get("year") or "?", old.get("importedAt") or "时间未知"))
+    # 解析结果兜底：一份正常的方案一定同时有课组和方案内课程。
+    # 只认 sharedStrings 的解析器遇到 inlineStr 存文本的 xlsx 会得到空结果，
+    # 这里直接拒绝，避免写进一份「零要求」的空方案。
+    if not plan["cats"] or not plan["codes"]:
+        raise ValueError(
+            "这份文件没有解析出任何课组/课程（识别到专业：%s），已停止导入，原有方案未改动；"
+            "常见原因：文件以 inlineStr 方式保存，或选的不是「xx主修培养方案」文件。"
+            % (plan["major"] or "未知"))
     plan["importedAt"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     plans["majors"][plan["major"]] = plan
     os.makedirs(DATA, exist_ok=True)
