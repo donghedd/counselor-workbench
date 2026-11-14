@@ -79,14 +79,6 @@ TALKS_FILE = "11_谈话跟进表.csv"
 TALK_HEADER = ["记录ID", "学号", "姓名", "谈话时间", "谈话方式", "谈话内容", "更新时间"]
 TABLES = {
     "students": "01_学生主表.csv",
-    "ycMembers": "02_羽协会员表.csv",
-    "ycActivities": "03_羽协活动表.csv",
-    "ycEvents": "04_羽协赛事表.csv",
-    "ycFinance": "05_羽协经费物资表.csv",
-    "ldProjects": "06_劳动教育项目表.csv",
-    "ldHours": "07_劳动教育参与学时表.csv",
-    "ldSchedule": "08_劳动教育基地排班表.csv",
-    "ldMaterials": "09_劳动教育考核材料表.csv",
     "todos": "10_跨域待办表.csv",
     "talks": TALKS_FILE,
 }

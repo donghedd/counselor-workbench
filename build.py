@@ -15,14 +15,6 @@ THUMB_DIR = os.path.join(HERE, "photos")
 
 TABLES = {
     "students": "01_学生主表.csv",
-    "ycMembers": "02_羽协会员表.csv",
-    "ycActivities": "03_羽协活动表.csv",
-    "ycEvents": "04_羽协赛事表.csv",
-    "ycFinance": "05_羽协经费物资表.csv",
-    "ldProjects": "06_劳动教育项目表.csv",
-    "ldHours": "07_劳动教育参与学时表.csv",
-    "ldSchedule": "08_劳动教育基地排班表.csv",
-    "ldMaterials": "09_劳动教育考核材料表.csv",
     "todos": "10_跨域待办表.csv",
     "talks": "11_谈话跟进表.csv",
 }
@@ -112,7 +104,7 @@ def render(data, out_name):
     print("built:", out_name, f"{len(html)//1024} KB")
 
 
-def write_masked_csvs(students, hours, table_names):
+def write_masked_csvs(students, table_names):
     if "students" not in table_names:
         print("无学生主表，跳过脱敏导出")
         return
@@ -127,16 +119,6 @@ def write_masked_csvs(students, hours, table_names):
         for x in students:
             y = build_masked_students([x])[0]
             w.writerow([y.get(c, "") for c in keep])
-    # 参与学时表脱敏版
-    if "ldHours" not in table_names:
-        print("masked csv ->", exp)
-        return
-    fn2, header2 = table_names["ldHours"]
-    with open(os.path.join(exp, fn2), "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.writer(f)
-        w.writerow(header2)
-        for x in hours:
-            w.writerow([mask_sid(x.get("学号", "")) if c == "学号" else mask_name(x.get(c, "")) if c == "姓名" else x.get(c, "") for c in header2])
     print("masked csv ->", exp)
 
 
@@ -222,7 +204,6 @@ def main():
     render(data, "dashboard.html")
     # 脱敏版
     students = data["students"]
-    hours = data["ldHours"]
     names = {x["姓名"] for x in students}
     masked = dict(data)
     masked["students"] = build_masked_students(students)
@@ -232,7 +213,6 @@ def main():
     ac["warnings"] = []
     masked["academic"] = ac
     masked["photos"], masked["thumbs"] = {}, []  # 照片属敏感信息，脱敏版一律不带
-    masked["ldHours"] = [{**h, "学号": mask_sid(h.get("学号", "")), "姓名": mask_name(h.get("姓名", ""))} for h in hours]
     masked["todos"] = [{**t, "对象": mask_text(t.get("对象", ""), names)} for t in data["todos"]]
     # 谈话记录含姓名与谈话内容：脱敏版同样模糊化（内容里出现的学生姓名一并打码）
     masked["talks"] = [
@@ -243,7 +223,7 @@ def main():
         for t in data.get("talks", [])
     ]
     render(masked, "dashboard_脱敏外发版.html")
-    write_masked_csvs(students, hours, table_names)
+    write_masked_csvs(students, table_names)
     build_xlsx(table_names)
     print("ALL BUILT at", now)
 

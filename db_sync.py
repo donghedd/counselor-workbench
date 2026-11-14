@@ -14,14 +14,6 @@ DB = os.path.join(HERE, "辅导员工作台.db")
 # key -> (CSV 文件名, 数据库表名)
 TABLES = [
     ("students", "01_学生主表.csv", "学生主表"),
-    ("ycMembers", "02_羽协会员表.csv", "羽协会员表"),
-    ("ycActivities", "03_羽协活动表.csv", "羽协活动表"),
-    ("ycEvents", "04_羽协赛事表.csv", "羽协赛事表"),
-    ("ycFinance", "05_羽协经费物资表.csv", "羽协经费物资表"),
-    ("ldProjects", "06_劳动教育项目表.csv", "劳动教育项目表"),
-    ("ldHours", "07_劳动教育参与学时表.csv", "劳动教育参与学时表"),
-    ("ldSchedule", "08_劳动教育基地排班表.csv", "劳动教育基地排班表"),
-    ("ldMaterials", "09_劳动教育考核材料表.csv", "劳动教育考核材料表"),
     ("todos", "10_跨域待办表.csv", "跨域待办表"),
     ("talks", "11_谈话跟进表.csv", "谈话跟进表"),
     ("warnings", "14_学业警示.csv", "学业警示表"),

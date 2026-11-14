@@ -655,7 +655,7 @@ nav .tab.active + .subnav{display:flex}
 const DATA = /*__WORKBENCH_DATA__*/{};
 /* ---------- 编辑机制 ---------- */
 const EDIT = location.protocol.startsWith("http") && !decodeURIComponent(location.pathname).includes("脱敏");
-const TABLE_KEYS=["students","ycMembers","ycActivities","ycEvents","ycFinance","ldProjects","ldHours","ldSchedule","ldMaterials","todos"];
+const TABLE_KEYS=["students","todos"];
 /* CSV 表头可能带枚举说明（如「风险等级(高/中/低)」）：统一补一份短名，前端一律按短名取值。
    保存端 server.py 的 find_col 也做了同款容错，所以补别名不影响写回。 */
 TABLE_KEYS.forEach(k=>(DATA[k]||[]).forEach(r=>{
@@ -670,18 +670,12 @@ TABLE_KEYS.forEach(k=>(DATA[k]||[]).forEach(r=>{
 const EDITABLE = {
   students: ["毕业去向","去向确认状态","升学_报考学校","升学_结果状态","就业_单位名称","就业_地区","就业_三方合同状态","具体去向","职务","性格","特长","外住_类型","外住_起止日期","外住_审批状态","外住_安全告知","外住_紧急联系人","风险标签","待办事项","下次跟进日期","备注","材料_外住审批表","材料_安全承诺书"],
   todos: ["工作域","对象","事项","说明","风险等级","截止日期","负责人","下次跟进日期","状态"],
-  ldHours: ["二课加分","学时","认定状态","材料状态","备注"],
-  ycFinance: ["支出","余额","归还状态","报销状态","负责人","截止日期"],
-  ldProjects: ["负责教师","基地/地点","起止日期","学时","项目状态"],
 };
 const ENUM_SEL = {"毕业去向":["考研","保研","留学","就业","考公考编","自由职业","暂无"],
                   "在校学年":["1","2","3","4","5","6"],
                   "去向确认状态":["已确认","待确认","待排查"],
-                  "认定状态":["待审核","已认定","不通过"],
                   "状态":["未开始","进行中","已完成","已关闭"],
                   "风险等级":["高","中","低"],
-                  "项目状态":["筹备","进行中","已完成"],
-                  "报销状态":["待补充","已报销","无需报销"],
                   "外住_审批状态":["已通过","已退回","申请中","已审批","已到期","已过期"],
                   "外住_安全告知":["已完成","未完成","待补充"],
                   "升学_材料齐全":["齐全","缺失","待补充"],
@@ -976,7 +970,7 @@ function drawStuList(){
   $("#mmask").style.display="block";
 }
 PG_DRAW["stulist"]=()=>drawStuList();
-const S=DATA.students, H=DATA.ldHours, T=DATA.todos, F=DATA.ycFinance, P=DATA.ldProjects, TK=DATA.talks||[];
+const S=DATA.students, T=DATA.todos, TK=DATA.talks||[];
 TK.forEach((r,i)=>r._i=i);
 /** 某学生的谈话记录（按时间倒序：新的在前） */
 const talkOf=sid=>TK.filter(r=>r["学号"]===sid).sort((a,b)=>String(b["谈话时间"]||"").localeCompare(String(a["谈话时间"]||"")));
