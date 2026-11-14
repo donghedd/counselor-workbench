@@ -1036,7 +1036,7 @@ const todosHigh=todosOpen.filter(x=>x["风险等级"]==="高");
 
 /* ---------- Overview ---------- */
 kpi("#kpi-overview",[
- {v:S.length,l:"毕业班总人数",c:"b",on:()=>S},
+ {v:S.length,l:"总人数",c:"b",on:()=>S},
  {v:cnt(S,x=>x["毕业去向"]==="考研"),l:"考研",c:"g",on:()=>S.filter(x=>x["毕业去向"]==="考研")},
  {v:cnt(S,x=>x["毕业去向"]==="保研"),l:"保研",c:"g",on:()=>S.filter(x=>x["毕业去向"]==="保研")},
  {v:cnt(S,x=>x["毕业去向"]==="留学"),l:"留学",c:"g",on:()=>S.filter(x=>x["毕业去向"]==="留学")},
