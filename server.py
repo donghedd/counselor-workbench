@@ -1379,6 +1379,9 @@ def rebuild_dashboard():
 
 def open_browser(url):
     """Windows 下用默认浏览器打开；os.startfile 比 webbrowser 更可靠。"""
+    if os.environ.get("WORKBENCH_NO_BROWSER"):
+        # 静默模式（自动化测试用），不弹浏览器
+        return True
     try:
         os.startfile(url)
         return True
