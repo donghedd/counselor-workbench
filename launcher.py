@@ -446,18 +446,29 @@ def main():
                 # 窗口确实在，只是没能抢到前台（被别的窗口压着），再开一个窗口给用户
                 _log("窗口存在但没能提到前台，另开一个窗口连过去。")
             else:
-                # 端口被占、却一个窗口都没有：上次没退干净的僵尸进程。
-                # 直接新开窗口会和它抢 WebView2，常常两个都起不来——先清掉它。
+                # 端口被占、却一个窗口都没有：多半是旧实例正在退出（窗口刚被关、
+                # 进程还没走完），或上次没退干净的僵尸。直接开窗口必然「拒绝连接」。
                 pid = _pid_on_port(server.PORT)
                 if pid and pid != os.getpid():
-                    _log("端口被没有窗口的进程占用（pid=%d），清理后重新启动。" % pid)
+                    _log("端口被没有窗口的进程占用（pid=%d），清理后等待端口释放。" % pid)
                     _kill_pid(pid)
-                    time.sleep(1.5)
+                for _ in range(6):
+                    time.sleep(1.0)
                     httpd = server.start_server()
-                if httpd is not None:
-                    _log("僵尸进程已清理，重新启动服务：%s" % url)
-                else:
-                    _log("旧进程清理失败，另开一个窗口连过去。")
+                    if httpd is not None:
+                        _log("旧实例已让出端口，自己接管服务：%s" % url)
+                        break
+                if httpd is None:
+                    # 还是抢不到 8787：换备用端口自己起服务。宁可换个端口，
+                    # 也绝不能开一个注定「127.0.0.1 拒绝连接」的空窗口。
+                    for p in (server.PORT + 1, server.PORT + 2):
+                        httpd = server.start_server(port=p)
+                        if httpd is not None:
+                            url = _start_url(p)
+                            _log("主端口 %d 一直被占，改用备用端口 %d：%s" % (server.PORT, p, url))
+                            break
+                if httpd is None:
+                    _log("服务始终没起来，只能连现有实例（可能显示连接失败）。")
         else:
             _log("服务已启动：%s" % url)
 
