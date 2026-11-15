@@ -4,7 +4,7 @@
 - 看板中点「保存更改」→ POST /api/save → 写回 data/*.csv → 自动重建看板与脱敏版。
 只读写 辅导员工作台_输出/ 目录，不碰任何原始文件。"""
 import base64, csv, datetime, io, json, os, re, subprocess, sys, urllib.parse
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, HTTPServer, SimpleHTTPRequestHandler
 
 from app_paths import APP_HOME as HERE
 import xlsx_io
@@ -1405,10 +1405,15 @@ def port_in_use(port):
 
 
 def start_server(port=PORT):
-    """在后台起服务（给桌面窗口外壳用）。端口被占则返回 None，表示已有实例在跑。"""
+    """在后台起服务（给桌面窗口外壳用）。端口被占则返回 None，表示已有实例在跑。
+
+    用 ThreadingHTTPServer 而不是 HTTPServer：页面一次要加载几百张缩略图，
+    单线程服务会把图片请求排成一队，WebView 等不及就判失败，出现「有照片
+    但显示成破图」。多线程让图片并发出去，每个请求一条线程。
+    """
     if port_in_use(port):
         return None
-    httpd = HTTPServer(("127.0.0.1", port), Handler)
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     import threading
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
@@ -1478,7 +1483,7 @@ def main():
 
     threading.Thread(target=_open, daemon=True).start()
     try:
-        HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     except KeyboardInterrupt:
         print("\n服务已停止。")
     except OSError as e:

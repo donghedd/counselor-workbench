@@ -323,6 +323,8 @@ select.ed-sel.mini{padding:1px 4px;font-size:11.5px;border-radius:6px}
 .auto-row:first-of-type{border-top:0}
 .ai-badge{flex:0 0 auto;font-size:10.5px;padding:1px 7px;border-radius:999px;background:#eaf1ff;color:#2a5bd7;border:1px solid #d3e0fb}
 .ai-dom,.ai-obj{flex:0 0 auto;color:#5b6678;font-variant-numeric:tabular-nums}
+.ai-link{cursor:pointer;color:#2a5bd7;border-bottom:1px dashed #9db7ec}
+.ai-link:hover{color:#1b46b3;border-bottom-color:#1b46b3}
 .ai-item{flex:1;min-width:0;color:var(--txt);word-break:break-word}
 .ai-lv{flex:0 0 auto;display:flex}
 .ai-add{flex:0 0 auto;padding:1px 10px;font-size:11.5px;border-radius:999px;color:var(--blue);border-color:#c7d8f8;background:#f5f8ff}
@@ -1190,13 +1192,16 @@ function renderTodoCard(){
       '<button class="btn" onclick="addTodo()">+ 新增待办</button>':'')+'</div>';
   const list=pgSlice("ch-todo",rows,10).map(r=>{
     const i=r._i,dn=todoDone(r),note=String(r["说明"]||"").trim();
-    const sub=[String(r["工作域"]||"").trim(),String(r["对象"]||"").trim()].filter(Boolean).join(" · ");
+    const domTxt=String(r["工作域"]||"").trim(),objTxt=String(r["对象"]||"").trim();
+    const iss=issueOfTodo(r);
+    const objHtml=(objTxt&&iss)?'<span class="ai-link" onclick="event.stopPropagation();showIssueStudents('+AUTO_ISSUES.indexOf(iss)+')" title="查看相关同学">'+esc(objTxt)+'</span>':esc(objTxt);
+    const sub=[esc(domTxt),objHtml].filter(Boolean).join(" · ");
     const src=String(r["来源"]||"").trim();
     const noteHtml=note?'<div class="todo-note">'+esc(note)+'</div>':'';
     return '<div class="todo-row'+(dn?' done':'')+'" data-i="'+i+'">'+
       '<input class="cb" type="checkbox"'+(dn?' checked':'')+(EDIT?'':' disabled')+' title="勾选=已完成" onclick="toggleTodo('+i+',this.checked)">'+
       '<div class="tw"><div class="todo-item">'+esc(String(r["事项"]||"").trim()||"—")+'</div>'+
-        '<div class="small" style="margin-top:2px">'+esc(sub||"—")+(src?' · 来源：'+esc(src):'')+'</div>'+noteHtml+'</div>'+
+        '<div class="small" style="margin-top:2px">'+(sub||"—")+(src?' · 来源：'+esc(src):'')+'</div>'+noteHtml+'</div>'+
       '<div class="todo-meta">'+tag(r["风险等级"])+dueHtml(r["截止日期"],dn)+
         (EDIT?'<button class="btn todo-edit" onclick="editTodo('+i+')" title="编辑这条待办">✎ 编辑</button>':'')+
       '</div></div>';
@@ -1269,36 +1274,40 @@ function anyPhoto(){return Object.keys(PHOTO).length>0||THUMBS.size>0}
 let AUTO_ISSUES=[];
 function detectIssues(){
   const out=[];
-  const add=(dom,obj,item,lv,kw)=>out.push({dom:dom,obj:obj,item:item,lv:lv,kw:kw});
+  /* rows：这项检测涉及的学生（点「N 人」直接弹出名单） */
+  const add=(dom,obj,item,lv,kw,rows)=>out.push({dom:dom,obj:obj,item:item,lv:lv,kw:kw,rows:rows||[]});
   const has=(x,re)=>re.test(String(x||""));
   /* 1) 外住已退回 */
   const wzBack=S.filter(x=>has(x["外住_审批状态"],/退回|驳回|不通过/));
-  if(wzBack.length)add("毕业班",wzBack.length+" 人","外住审批已退回但仍在外住名单中，需跟进处置","高",["外住","退回"]);
+  if(wzBack.length)add("毕业班",wzBack.length+" 人","外住审批已退回但仍在外住名单中，需跟进处置","高",["外住","退回"],wzBack);
   /* 2) 材料缺失 */
   const matBad=S.filter(x=>Object.values(x).some(v=>String(v).trim()==="缺失"));
-  if(matBad.length)add("毕业班",matBad.length+" 人","学生材料标注为缺失，需补齐","中",["材料"]);
+  if(matBad.length)add("毕业班",matBad.length+" 人","学生材料标注为缺失，需补齐","中",["材料"],matBad);
   /* 3) 手机号位数异常 */
   const badPhone=S.filter(x=>{const p=String(x["手机号"]||"").replace(/\D/g,"");return p&&p.length!==11});
-  if(badPhone.length)add("毕业班",badPhone.length+" 人","手机号位数异常，需核对更正","中",["手机号"]);
+  if(badPhone.length)add("毕业班",badPhone.length+" 人","手机号位数异常，需核对更正","中",["手机号"],badPhone);
   /* 4) 外住信息不全（有外住记录但起止日期/紧急联系人缺） */
   const wzLack=S.filter(x=>String(x["外住_审批状态"]||"").trim()&&(!String(x["外住_起止日期"]||"").trim()||!String(x["外住_紧急联系人"]||"").trim()));
-  if(wzLack.length)add("毕业班",wzLack.length+" 人","外住起止日期/紧急联系人缺失，需补全","中",["外住"]);
+  if(wzLack.length)add("毕业班",wzLack.length+" 人","外住起止日期/紧急联系人缺失，需补全","中",["外住"],wzLack);
   /* 5) 毕业去向未确定 */
   const noDest=S.filter(x=>{const d=String(x["毕业去向"]||"").trim();return !d||d==="暂无"});
-  if(noDest.length)add("毕业班",noDest.length+" 人","毕业去向未确定，需逐一确认","高",["去向"]);
+  if(noDest.length)add("毕业班",noDest.length+" 人","毕业去向未确定，需逐一确认","高",["去向"],noDest);
   /* 6) 学生风险标签 */
-  if(stuRisk.length)add("毕业班",stuRisk.length+" 人","存在风险标签的学生，需跟进","高",["风险"]);
+  if(stuRisk.length)add("毕业班",stuRisk.length+" 人","存在风险标签的学生，需跟进","高",["风险"],stuRisk);
   /* 7) 学业警示 */
   const aw=(DATA.academic&&DATA.academic.warnings)||[];
-  if(aw.length)add("毕业班",aw.length+" 人","学业警示学生需安排谈话并记录","中",["学业"]);
+  if(aw.length){
+    const sidSet=new Set(aw.map(w=>String(w["学号"]||w["sid"]||"").trim()).filter(Boolean));
+    add("毕业班",aw.length+" 人","学业警示学生需安排谈话并记录","中",["学业"],S.filter(x=>sidSet.has(String(x["学号"]||"").trim())));
+  }
   /* 8) 谈话跟进缺失：有风险/警示但本学期无谈话记录 */
   const talkSid=new Set((DATA.talks||[]).map(t=>String(t["学号"]||"").trim()).filter(Boolean));
   const noTalk=stuRisk.filter(x=>!talkSid.has(String(x["学号"]||"").trim()));
-  if(noTalk.length)add("毕业班",noTalk.length+" 人","风险学生本学期尚无谈话记录，需补录","中",["谈话"]);
+  if(noTalk.length)add("毕业班",noTalk.length+" 人","风险学生本学期尚无谈话记录，需补录","中",["谈话"],noTalk);
   /* 9) 证件照缺失：已导入过照片（存在缩略图）但仍有学生没有，提示补齐 */
   if(anyPhoto()){
     const noPhoto=S.filter(x=>!hasPhotoOf(x["学号"]));
-    if(noPhoto.length)add("毕业班",noPhoto.length+" 人","部分学生缺少证件照，需补拍或导入","低",["证件照"]);
+    if(noPhoto.length)add("毕业班",noPhoto.length+" 人","部分学生缺少证件照，需补拍或导入","低",["证件照"],noPhoto);
   }
   /* 与「未完成」的待办按关键词去重：事项里同时包含全部关键词即视为已加入 */
   const live=T.filter(t=>!todoDone(t));
@@ -1328,6 +1337,19 @@ async function adoptIssue(i){
    每行可「＋ 加入待办」写入表格，或「✕ 删除」= 忽略（本机记住，不再提示）。 */
 const IGN_KEY="wb_ignored_issues";
 function issueKey(it){return String(it.dom||"")+"|"+String(it.item||"")}
+/* 点「N 人」看是哪些同学：检测项里带着实时算出的名单 */
+function showIssueStudents(i){
+  const it=AUTO_ISSUES[i];if(!it)return;
+  if(!it.rows||!it.rows.length){showToast("这一项暂时没有可列出的学生明细",true);return}
+  stuListModal(it.item,it.rows,null);
+}
+/* 待办表里的一条能否对上某个自动检测项（「事项」文案一致即可） */
+function issueOfTodo(rec){
+  const item=String(rec&&rec["事项"]||"").trim();if(!item)return null;
+  /* 首次渲染时自动检测区还没跑，这里先算一遍并缓存（否则点击拿不到名单） */
+  if(!AUTO_ISSUES||!AUTO_ISSUES.length)AUTO_ISSUES=detectIssues();
+  return AUTO_ISSUES.find(it=>String(it.item||"").trim()===item)||null;
+}
 function ignoredSet(){
   try{return new Set(JSON.parse(localStorage.getItem(IGN_KEY)||"[]")||[])}catch(e){return new Set()}
 }
@@ -1357,7 +1379,7 @@ function renderAutoBlock(){
   const rows=pend.map(it=>{
     const i=iss.indexOf(it);
     return '<div class="auto-row"><span class="ai-badge">自动</span><span class="ai-dom">'+esc(it.dom)+'</span>'+
-      '<span class="ai-obj">'+esc(it.obj)+'</span><span class="ai-item">'+esc(it.item)+'</span>'+
+      '<span class="ai-obj ai-link" onclick="showIssueStudents('+i+')" title="查看相关同学">'+esc(it.obj)+'</span><span class="ai-item">'+esc(it.item)+'</span>'+
       '<span class="ai-lv">'+tag(it.lv)+'</span>'+
       '<span class="ai-ops">'+
       (EDIT?'<button class="btn ai-add" onclick="adoptIssue('+i+')">＋ 加入待办</button>':'')+
@@ -1409,6 +1431,16 @@ function photoSrc(sid){
   if(THUMBS.has(sid))return "photos/"+(/^\d+$/.test(sid)?sid:encodeURIComponent(sid))+".jpg";
   if(EDIT&&PHOTO[sid])return "/photo/"+encodeURIComponent(sid);
   return PHOTO[sid]||"";
+}
+/* 缩略图偶发加载失败时自动重试：一次要加载上百张图，当时服务忙/请求被中断
+   就会留下破图图标。前两次隔一会儿带 ?_r= 再要一次，两次都失败就把图藏起来
+   （保留占位大小），不再显示破图。 */
+function imgRetry(el){
+  const n=+(el.dataset.rt||0);
+  if(n>=2){el.style.visibility="hidden";return}
+  el.dataset.rt=n+1;
+  const base=el.src.split("?")[0];
+  setTimeout(()=>{el.src=base+"?_r="+(n+1)+"-"+Date.now()},150*(n+1));
 }
 /* 展示形式记忆：离开页面再回来、甚至重启软件，都停在上次选的形式（列表/照片/胶囊） */
 const VIEW_MEM={
@@ -1474,7 +1506,7 @@ function floorBoard(rows){
     return '<div class="room-card"><div class="rc-h">'+esc(r)+' <span class="n">'+mem.length+'人</span>'+(wz?' <span class="wz">外住 '+wz+'</span>':'')+'</div><div class="rc-b">'+
       mem.map(x=>{
         const src=photoSrc(x["学号"]);
-        const av=src?'<img loading="lazy" src="'+src+'" alt="">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
+        const av=src?'<img loading="lazy" src="'+src+'" alt="" onerror="imgRetry(this)">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
         return '<span class="member" onclick="stuDetail(\''+x["学号"]+'\')">'+av+esc(x["姓名"])+(x._wz?'<b class="wz">外住</b>':'')+'</span>';
       }).join("")+'</div></div>';
   }).join("");
@@ -1504,7 +1536,7 @@ function renderCatTable(rows){
 function renderCatPhoto(rows,pgKey){
   return '<div class="pgrid">'+pgSlice(pgKey||"grad-cat-photo",rows,10).map(x=>{
     const src=photoSrc(x["学号"]);
-    const inner=src?'<img loading="lazy" decoding="async" src="'+src+'" alt="'+esc(x["姓名"])+'">':'<span class="ini">'+esc((x["姓名"]||"?")[0])+'</span>';
+    const inner=src?'<img loading="lazy" decoding="async" src="'+src+'" alt="'+esc(x["姓名"])+'" onerror="imgRetry(this)">':'<span class="ini">'+esc((x["姓名"]||"?")[0])+'</span>';
     return '<div class="pcard" onclick="stuDetail(\''+x["学号"]+'\')"><div class="ph">'+inner+'</div><div class="nm">'+esc(x["姓名"])+'</div><div class="cl">'+esc(String(x["班级"]).replace("2023","'23"))+'</div></div>';
   }).join("")+'</div>';
 }
@@ -1521,7 +1553,7 @@ const clsCmp=(p,q)=>String(p).localeCompare(String(q),"zh");
 const groupKeyOf=(x,mode)=>mode==="room"?(x._room||PENDING_ROOM):String(x["班级"]||"—");
 function memberHtml(x){
   const src=photoSrc(x["学号"]);
-  const av=src?'<img loading="lazy" src="'+src+'" alt="">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
+  const av=src?'<img loading="lazy" src="'+src+'" alt="" onerror="imgRetry(this)">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
   return '<span class="member" onclick="stuDetail(\''+x["学号"]+'\')">'+av+esc(x["姓名"])+(x._wz?'<b class="wz">外住</b>':'')+'</span>';
 }
 function renderPillGroups(rows,mode,pgKey){
@@ -2190,7 +2222,7 @@ function stuDetail(sid){
     return '<div class="k">'+k+'</div><div>'+(v?'<b>'+esc(x[k])+'</b>':'<span class="tag tgr">待补充</span>')+'</div>';
   };
   const psrc=photoSrc(x["学号"]);
-  const pic=psrc?'<img class="mphoto" src="'+psrc+'" alt="'+esc(x["姓名"])+'" loading="lazy">':'';
+  const pic=psrc?'<img class="mphoto" src="'+psrc+'" alt="'+esc(x["姓名"])+'" loading="lazy" onerror="imgRetry(this)">':'';
   let kvFields=["学号","性别","专业","政治面貌","手机号","寝室号","GPA","专业排名","毕业去向"];
   ["职务","性格","特长"].forEach(f=>{if(String(x[f]||"").trim())kvFields.splice(kvFields.indexOf("毕业去向"),0,f)});
   if(isShengxue(x))kvFields=kvFields.concat(["升学_报考学校","升学_结果状态"]);
