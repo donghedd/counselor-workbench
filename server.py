@@ -207,7 +207,9 @@ EXCEL_ENUMS = {
     "推免_是否放弃": ["是", "否", "待补充"],
     "风险等级": ["高", "中", "低"],
 }
-_MATERIAL_FIELDS = ["材料_三方协议", "材料_劳动合同", "材料_录取通知", "材料_外住审批表", "材料_安全承诺书"]
+_MATERIAL_FIELDS = ["材料_外住审批表", "材料_安全承诺书"]
+# 已下线字段：只留在历史数据里不再使用，启动时自动从学生主表清掉（删前先备份整份 CSV）
+RETIRED_COLS = ["毕业意向(问卷)", "材料_三方协议", "材料_劳动合同", "材料_录取通知"]
 
 FIELD_NOTES = {
     "学号": "必填，用于匹配学生；表中没有该学号则按新增处理",
@@ -1409,6 +1411,39 @@ def start_server(port=PORT):
     return httpd
 
 
+def cleanup_retired_columns():
+    """把已下线的列从学生主表 CSV 里清掉。
+
+    之前只是把这些字段的编辑入口下掉了，CSV 列一直还在，导出清单里会漏出来。
+    现在启动时统一清理：发现表头里有下线列就先把整份 CSV 备份到「备份」目录，再重写。
+    幂等：没有下线列时什么都不做。
+    """
+    import shutil, time
+    path = os.path.join(DATA, STU_FILE)
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+        if not rows:
+            return
+        hit = [c for c in RETIRED_COLS if c in rows[0]]
+        if not hit:
+            return
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        bak = os.path.join(BACKUP_DIR, "01_学生主表_清理字段前_%s.csv" % ts)
+        shutil.copy2(path, bak)
+        drop = [rows[0].index(c) for c in hit]
+        out = [[c for i, c in enumerate(r) if i not in drop] for r in rows]
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows(out)
+        print("[清理] 已从学生主表移除下线字段：%s" % "、".join(hit))
+        print("[清理] 原 CSV 已备份到：%s" % bak)
+    except Exception as e:
+        print("[清理] 失败（不影响启动）：%s" % str(e)[:120])
+
+
 def main():
     url = "http://127.0.0.1:%d/dashboard.html" % PORT
 
@@ -1418,6 +1453,8 @@ def main():
         open_browser(url)
         print("本窗口可以直接关闭（不会影响已在运行的服务）。")
         return
+
+    cleanup_retired_columns()
 
     print("=" * 58)
     print("  辅导员工作台 - 编辑模式")
