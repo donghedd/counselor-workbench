@@ -590,8 +590,16 @@ nav .tab.active + .subnav{display:flex}
               <select id="f-depart"><option value="">全部去向</option></select>
               <select id="f-risk"><option value="">全部风险</option><option>有风险</option><option>无风险</option></select>
               <select id="f-confirm"><option value="">全部确认状态</option></select>
+              <select id="f-sort" title="排序方式（列表/照片按它排，胶囊按它分组）" onchange="setAllSort(this.value)">
+                <option value="class">按班级</option><option value="room">按寝室</option></select>
               <span class="small" id="f-count"></span>
-              <button class="btn" id="add-stu-btn" style="display:none;margin-left:auto" onclick="openAddStudent()">新增学生</button>
+              <span class="seg-group" style="margin-left:auto">
+                <span class="small">展示形式</span>
+                <button class="seg" data-aview="table">列表</button>
+                <button class="seg" data-aview="photo">照片</button>
+                <button class="seg" data-aview="pill">胶囊</button>
+              </span>
+              <button class="btn" id="add-stu-btn" style="display:none" onclick="openAddStudent()">新增学生</button>
             </div>
             <div style="max-height:620px;overflow:auto" id="grad-main"></div>
             <div id="grad-main-pager"></div>
@@ -1402,7 +1410,12 @@ function photoSrc(sid){
   if(EDIT&&PHOTO[sid])return "/photo/"+encodeURIComponent(sid);
   return PHOTO[sid]||"";
 }
-let gcat="dest",gview="pill",gsel="考研",gsex="男";
+/* 展示形式记忆：离开页面再回来、甚至重启软件，都停在上次选的形式（列表/照片/胶囊） */
+const VIEW_MEM={
+  get(k,d){try{const v=localStorage.getItem("wb.view."+k);return (v==="table"||v==="photo"||v==="pill")?v:d}catch(e){return d}},
+  set(k,v){try{localStorage.setItem("wb.view."+k,v)}catch(e){}}
+};
+let gcat="dest",gview=VIEW_MEM.get("board","pill"),gsel="考研",gsex="男";
 function renderChips(){
   const box=$("#grad-chips"),fbox=$("#grad-floors");
   if(gcat!=="room"){fbox.style.display="none";fbox.innerHTML=""}
@@ -1488,34 +1501,42 @@ function renderCatTable(rows){
   }
   return '<table><tr>'+hdr.map(h=>'<th>'+h+'</th>').join("")+'</tr>'+pgSlice("grad-cat",rows,10).map(tr).join("")+'</table>';
 }
-function renderCatPhoto(rows){
-  return '<div class="pgrid">'+pgSlice("grad-cat-photo",rows,10).map(x=>{
+function renderCatPhoto(rows,pgKey){
+  return '<div class="pgrid">'+pgSlice(pgKey||"grad-cat-photo",rows,10).map(x=>{
     const src=photoSrc(x["学号"]);
     const inner=src?'<img loading="lazy" decoding="async" src="'+src+'" alt="'+esc(x["姓名"])+'">':'<span class="ini">'+esc((x["姓名"]||"?")[0])+'</span>';
     return '<div class="pcard" onclick="stuDetail(\''+x["学号"]+'\')"><div class="ph">'+inner+'</div><div class="nm">'+esc(x["姓名"])+'</div><div class="cl">'+esc(String(x["班级"]).replace("2023","'23"))+'</div></div>';
   }).join("")+'</div>';
 }
-/* 胶囊图：按去向/按班级下，把成员按寝室分组的成员胶囊（按「寝室组」分页） */
-function renderPill(rows){
-  const keyOf=x=>x._room||"待核对";
-  const rooms=[...new Set(rows.map(keyOf))].sort((p,q)=>{
-    if(p===q)return 0;
-    if(p==="待核对")return 1;if(q==="待核对")return -1;
-    const pp=p.split("-").map(Number),qq=q.split("-").map(Number);
-    if(pp.length<2||qq.length<2)return p.localeCompare(q);
-    return (pp[0]-qq[0])||(pp[1]-qq[1]);
-  });
-  return pgSlice("grad-cat-pill",rooms,10).map(r=>{
-    const mem=rows.filter(x=>keyOf(x)===r).sort((x,y)=>x["姓名"].localeCompare(y["姓名"],"zh"));
+/* 胶囊图：把成员按寝室（或班级）分组，每组一张卡，按「组」分页 */
+const PENDING_ROOM="待核对";
+function roomCmp(p,q){
+  if(p===q)return 0;
+  if(p===PENDING_ROOM)return 1;if(q===PENDING_ROOM)return -1;
+  const pp=p.split("-").map(Number),qq=q.split("-").map(Number);
+  if(pp.length<2||qq.length<2||isNaN(pp[0])||isNaN(qq[0]))return String(p).localeCompare(String(q),"zh");
+  return (pp[0]-qq[0])||(pp[1]-qq[1]);
+}
+const clsCmp=(p,q)=>String(p).localeCompare(String(q),"zh");
+const groupKeyOf=(x,mode)=>mode==="room"?(x._room||PENDING_ROOM):String(x["班级"]||"—");
+function memberHtml(x){
+  const src=photoSrc(x["学号"]);
+  const av=src?'<img loading="lazy" src="'+src+'" alt="">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
+  return '<span class="member" onclick="stuDetail(\''+x["学号"]+'\')">'+av+esc(x["姓名"])+(x._wz?'<b class="wz">外住</b>':'')+'</span>';
+}
+function renderPillGroups(rows,mode,pgKey){
+  const cmp=mode==="room"?roomCmp:clsCmp;
+  const keys=[...new Set(rows.map(x=>groupKeyOf(x,mode)))].sort(cmp);
+  return pgSlice(pgKey,keys,10).map(k=>{
+    const mem=rows.filter(x=>groupKeyOf(x,mode)===k).sort((a,b)=>String(a["姓名"]).localeCompare(String(b["姓名"]),"zh"));
     const wz=cnt(mem,x=>x._wz);
-    return '<div class="room-card"><div class="rc-h">'+esc(r)+' <span class="n">'+mem.length+'人</span>'+(wz?' <span class="wz">外住 '+wz+'</span>':'')+'</div><div class="rc-b">'+
-      mem.map(x=>{
-        const src=photoSrc(x["学号"]);
-        const av=src?'<img loading="lazy" src="'+src+'" alt="">':'<span class="mi">'+esc((x["姓名"]||"?")[0])+'</span>';
-        return '<span class="member" onclick="stuDetail(\''+x["学号"]+'\')">'+av+esc(x["姓名"])+(x._wz?'<b class="wz">外住</b>':'')+'</span>';
-      }).join("")+'</div></div>';
+    const label=mode==="room"?k:String(k).replace("2023","'23");
+    return '<div class="room-card"><div class="rc-h">'+esc(label)+' <span class="n">'+mem.length+'人</span>'+(wz?' <span class="wz">外住 '+wz+'</span>':'')+'</div><div class="rc-b">'+
+      mem.map(memberHtml).join("")+'</div></div>';
   }).join("");
 }
+/* 按去向/按班级下：成员胶囊按寝室分组（沿用旧行为） */
+function renderPill(rows){return renderPillGroups(rows,"room","grad-cat-pill")}
 /* 寝室视图固定为"按寝室名单"展示，隐藏 列表/照片 切换按钮 */
 function syncViewSegs(){
   const hasPhoto=anyPhoto();
@@ -1563,7 +1584,7 @@ PG_DRAW["grad-cat-photo"]=()=>renderCat();
 PG_DRAW["grad-cat-pill"]=()=>renderCat();
 $$("#p-grad .seg").forEach(b=>b.onclick=()=>{
   if(b.dataset.cat){gcat=b.dataset.cat;gsel=gcat==="dest"?"考研":gcat==="room"?(gsex==="unk"?"":firstFloorOf(gsex)):classes[0]}
-  if(b.dataset.view){gview=b.dataset.view}
+  if(b.dataset.view){gview=b.dataset.view;VIEW_MEM.set("board",gview)}
   ["grad-cat","grad-cat-photo","grad-cat-pill"].forEach(pgReset);
   $$("#p-grad .seg").forEach(x=>{if(x.dataset.cat)x.classList.toggle("active",x.dataset.cat===gcat);if(x.dataset.view)x.classList.toggle("active",x.dataset.view===gview)});
   renderChips();renderCat();
@@ -1578,10 +1599,11 @@ function setGradNav(nav){
   /* 学业视图不需要毕业班统计卡（人数/考研/保研/外住…），那里已有自己的学业卡片 */
   const kpiG=$("#kpi-grad");if(kpiG)kpiG.style.display=(nav==="study")?"none":"";
   $$("#grad-nav .gn-item").forEach(el=>el.classList.toggle("active",el.dataset.nav===nav));
-  if(nav==="class"){gcat="class";gsel=classes[0];gview="pill"}
+  /* 展示形式沿用上次选择（不在这里重置成胶囊）；寝室视图本身固定按寝室名单，不受影响 */
+  if(nav==="class"){gcat="class";gsel=classes[0]}
   else if(nav==="committee"){renderCommittee()}
-  else if(nav==="dest"){gcat="dest";gsel="考研";gview="pill"}
-  else if(nav==="room"){gcat="room";gsex=(gsex==="unk"?"男":gsex);gsel=firstFloorOf(gsex);gview="pill"}
+  else if(nav==="dest"){gcat="dest";gsel="考研"}
+  else if(nav==="room"){gcat="room";gsex=(gsex==="unk"?"男":gsex);gsel=firstFloorOf(gsex)}
   else if(nav==="study"){renderAcademic()}
   if(GNAV_TITLE[nav])$("#gv-board-title").textContent=GNAV_TITLE[nav];
   if(nav==="class"||nav==="dest"||nav==="room"){
@@ -2063,22 +2085,69 @@ function renderWaizhu(){
 PG_DRAW["waizhu"]=()=>renderWaizhu();
 renderWaizhu();
 let sortKey=null,sortAsc=true;
+let allView=VIEW_MEM.get("all","table"),allSort="class";
+function setAllSort(v){
+  allSort=(v==="room")?"room":"class";
+  try{localStorage.setItem("wb.allsort",allSort)}catch(e){}
+  ["stu-all","stu-photo","stu-pill"].forEach(pgReset);
+  renderMain();
+}
+function setAllView(v){
+  allView=v;VIEW_MEM.set("all",v);
+  ["stu-all","stu-photo","stu-pill"].forEach(pgReset);
+  renderMain();
+}
+function syncAllSegs(){
+  const hasPhoto=anyPhoto();
+  $$("#gv-all .seg").forEach(b=>{
+    if(!b.dataset.aview)return;
+    b.classList.toggle("active",b.dataset.aview===allView);
+    if(b.dataset.aview==="photo"&&!hasPhoto)b.style.display="none";
+  });
+  const s=$("#f-sort");if(s)s.value=allSort;
+}
+/* 按班级 / 按寝室排序（列表与照片都用它，胶囊则按同一口径分组） */
+function allSorted(rows){
+  const out=rows.slice();
+  if(allSort==="room")out.sort((a,b)=>roomCmp(a._room||PENDING_ROOM,b._room||PENDING_ROOM)||String(a["姓名"]).localeCompare(String(b["姓名"]),"zh"));
+  else out.sort((a,b)=>clsCmp(a["班级"],b["班级"])||String(a["姓名"]).localeCompare(String(b["姓名"]),"zh"));
+  return out;
+}
 function renderMain(){
   const q=$("#f-q").value.trim(),c=$("#f-class").value,d=$("#f-depart").value,rk=$("#f-risk").value,cf=$("#f-confirm").value;
   let rows=S.filter(x=>(!q||x["姓名"].includes(q)||x["学号"].includes(q))&&(!c||x["班级"]===c)&&(!d||x["毕业去向"]===d)&&(!cf||x["去向确认状态"]===cf)&&(!rk||(rk==="有风险"?!!x["风险标签"].trim():!x["风险标签"].trim())));
+  const total=rows.length;
+  $("#f-count").textContent=total+" 人";
+  syncAllSegs();
+  const gp=$("#grad-main-pager");
+  if(allView==="photo"){
+    const list=allSorted(rows);
+    $("#grad-main").innerHTML=renderCatPhoto(list,"stu-photo");
+    if(gp)gp.innerHTML=pgBar("stu-photo",list.length,"人",10);
+    return;
+  }
+  if(allView==="pill"){
+    const list=allSorted(rows);
+    $("#grad-main").innerHTML=renderPillGroups(list,allSort,"stu-pill");
+    if(gp)gp.innerHTML=pgBar("stu-pill",new Set(list.map(x=>groupKeyOf(x,allSort))).size,allSort==="room"?"组":"班",10);
+    return;
+  }
   const cols=["学号","姓名","班级","毕业去向","去向确认状态","GPA","专业排名","风险标签","待办事项"];
   let html='<table><tr>'+cols.map(k=>'<th class="sortable" data-k="'+k+'">'+k+(sortKey===k?(sortAsc?" ▲":" ▼"):"")+'</th>').join("")+'</tr>';
   if(sortKey){rows=[...rows].sort((a,b)=>{const x=a[sortKey]||"",y=b[sortKey]||"";return sortAsc?x.localeCompare(y,"zh"):y.localeCompare(x,"zh")})}
-  const total=rows.length;
+  else rows=allSorted(rows);
   html+=pgSlice("stu-all",rows,10).map(x=>'<tr onclick="stuDetail(\''+x["学号"]+'\')" style="cursor:pointer"><td>'+esc(x["学号"])+'</td><td>'+esc(x["姓名"])+'</td><td>'+esc(x["班级"])+'</td>'+edCell("students",x._i,"毕业去向",x["毕业去向"])+edCell("students",x._i,"去向确认状态",x["去向确认状态"])+'<td>'+esc(x["GPA"])+'</td><td>'+esc(x["专业排名"])+'</td><td>'+(String(x["风险标签"]||"").trim()?'<span class="tag tr">'+esc(x["风险标签"])+'</span>':'<span class="tag tgr">无</span>')+'</td><td class="small">'+esc(x["待办事项"])+'</td></tr>').join("")+'</table>';
   $("#grad-main").innerHTML=html;
-  const gp=$("#grad-main-pager");if(gp)gp.innerHTML=pgBar("stu-all",total,"人",10);
-  $("#f-count").textContent=total+" 人";
+  if(gp)gp.innerHTML=pgBar("stu-all",total,"人",10);
   $("#grad-main").querySelectorAll("th.sortable").forEach(th=>th.onclick=()=>{if(sortKey===th.dataset.k)sortAsc=!sortAsc;else{sortKey=th.dataset.k;sortAsc=true}pgReset("stu-all");renderMain()});
 }
 PG_DRAW["stu-all"]=()=>renderMain();
-["#f-q","#f-class","#f-depart","#f-risk","#f-confirm"].forEach(s=>$(s).addEventListener("input",()=>{pgReset("stu-all");renderMain()}));
-["#f-class","#f-confirm"].forEach(s=>$(s).addEventListener("change",()=>{pgReset("stu-all");renderMain()}));
+PG_DRAW["stu-photo"]=()=>renderMain();
+PG_DRAW["stu-pill"]=()=>renderMain();
+$$("#gv-all .seg").forEach(b=>{if(b.dataset.aview)b.onclick=()=>setAllView(b.dataset.aview)});
+try{const sv=localStorage.getItem("wb.allsort");if(sv==="room"||sv==="class")allSort=sv}catch(e){}
+["#f-q","#f-class","#f-depart","#f-risk","#f-confirm"].forEach(s=>$(s).addEventListener("input",()=>{["stu-all","stu-photo","stu-pill"].forEach(pgReset);renderMain()}));
+["#f-class","#f-confirm"].forEach(s=>$(s).addEventListener("change",()=>{["stu-all","stu-photo","stu-pill"].forEach(pgReset);renderMain()}));
 DESTS.forEach(v=>$("#f-depart").insertAdjacentHTML("beforeend",'<option>'+v+'</option>'));
 ["已确认","待确认","待排查"].forEach(v=>$("#f-confirm").insertAdjacentHTML("beforeend",'<option>'+v+'</option>'));
 renderMain();
