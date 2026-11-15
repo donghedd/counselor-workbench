@@ -21,6 +21,7 @@ from app_paths import APP_HOME
 APP_TITLE = "辅导员工作台"
 LOG_PATH = os.path.join(APP_HOME, "启动日志.txt")
 DASH = os.path.join(APP_HOME, "dashboard.html")
+_QUITTING = False       # 正常关窗退出时置位，告诉看门狗别再管
 
 
 # ---------------------------------------------------------------- 基础工具
@@ -90,6 +91,7 @@ def _find_hwnd(title, timeout=8.0):
 
 def _apply_icon():
     """把窗口图标换成工作台自己的图标（标题栏左上角 + 任务栏）。"""
+    _start_window_guard()       # 无论有没有图标都要看守窗口存活
     ico = _icon_path()
     if os.name != "nt" or not ico:
         return
@@ -107,6 +109,43 @@ def _apply_icon():
                 u.SendMessageW(h, WM_SETICON, which, hicon)
     except Exception:
         _log("设置窗口图标失败：\n" + traceback.format_exc())
+    _start_window_guard()
+
+
+def _stop_window_guard_flag():
+    global _QUITTING
+    _QUITTING = True
+
+
+def _start_window_guard():
+    """看门狗：窗口被销毁但 WebView 没退干净时，自己退出。
+
+    没有这一层会出现「进程还在、端口被占、屏幕上什么窗口都没有」的僵尸状态，
+    用户再双击图标只会撞上它——表现就是「打不开了」。
+    """
+    def loop():
+        time.sleep(6)               # 给窗口创建/设置标题留时间
+        miss = 0
+        while not _QUITTING:
+            time.sleep(2.5)
+            if _QUITTING:
+                return
+            try:
+                if _find_hwnd(APP_TITLE, timeout=0.3):
+                    miss = 0
+                    continue
+            except Exception:
+                continue
+            miss += 1
+            if miss >= 2:
+                _log("窗口已不存在，退出进程（避免占用端口变成僵尸）。")
+                os._exit(0)
+
+    try:
+        import threading
+        threading.Thread(target=loop, daemon=True).start()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- 准备数据
@@ -298,6 +337,43 @@ def _ensure_on_screen(h):
         pass
 
 
+def _pid_on_port(port):
+    """谁在监听这个端口（用 netstat 解析，不额外依赖 psutil）。"""
+    if os.name != "nt":
+        return 0
+    import subprocess
+    try:
+        out = subprocess.check_output(["netstat", "-ano", "-p", "TCP"],
+                                      creationflags=0x08000000,
+                                      stdin=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+        for line in out.decode("mbcs", "ignore").splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].endswith(":%d" % port) and parts[3].upper() == "LISTENING":
+                try:
+                    return int(parts[4])
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    return 0
+
+
+def _kill_pid(pid):
+    """连同子进程一起结束（WebView2 的渲染进程挂在它下面，不清理会残留）。"""
+    if os.name != "nt" or not pid:
+        return False
+    import subprocess
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       creationflags=0x08000000,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=10)
+        return True
+    except Exception:
+        return False
+
+
 def _activate_existing():
     """已有实例在跑时，把它的窗口提到前台。
 
@@ -317,6 +393,11 @@ def _activate_existing():
             u.ShowWindow(h, 9)      # SW_RESTORE
         _ensure_on_screen(h)
         u.BringWindowToTop(h)
+        # Windows 只允许「用户正在操作」的进程抢前台，否则 SetForegroundWindow 静默失败。
+        # 先模拟一次 ALT 按下/抬起，系统就认为有用户输入，前台锁随之解除。
+        VK_MENU, KEYEVENTF_KEYUP = 0x12, 0x0002
+        u.keybd_event(VK_MENU, 0, 0, 0)
+        u.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
         u.SetForegroundWindow(h)
         u.SwitchToThisWindow(h, True)
         time.sleep(0.2)
@@ -324,6 +405,13 @@ def _activate_existing():
         return bool(u.IsWindowVisible(h)) and u.GetForegroundWindow() == h
     except Exception:
         return False
+
+
+def _has_window():
+    """当前是否真的有一个能看见的工作台窗口（不看进程表里的缓存句柄）。"""
+    if os.name != "nt":
+        return True
+    return bool(_find_hwnd(APP_TITLE, timeout=0.8))
 
 
 def main():
@@ -354,12 +442,28 @@ def main():
             if _activate_existing():
                 _log("已把现有窗口带到前台，本次启动不再新开窗口。")
                 return 0
-            _log("没能把现有窗口带到前台，另开一个窗口连过去。")
+            if _has_window():
+                # 窗口确实在，只是没能抢到前台（被别的窗口压着），再开一个窗口给用户
+                _log("窗口存在但没能提到前台，另开一个窗口连过去。")
+            else:
+                # 端口被占、却一个窗口都没有：上次没退干净的僵尸进程。
+                # 直接新开窗口会和它抢 WebView2，常常两个都起不来——先清掉它。
+                pid = _pid_on_port(server.PORT)
+                if pid and pid != os.getpid():
+                    _log("端口被没有窗口的进程占用（pid=%d），清理后重新启动。" % pid)
+                    _kill_pid(pid)
+                    time.sleep(1.5)
+                    httpd = server.start_server()
+                if httpd is not None:
+                    _log("僵尸进程已清理，重新启动服务：%s" % url)
+                else:
+                    _log("旧进程清理失败，另开一个窗口连过去。")
         else:
             _log("服务已启动：%s" % url)
 
         try:
             _run_webview(url)
+            _stop_window_guard_flag()
             _log("窗口已关闭，正在退出。")
         except Exception:
             _log("WebView2 窗口不可用，改用 Edge 应用窗口：\n" + traceback.format_exc())
