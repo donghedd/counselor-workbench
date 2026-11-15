@@ -2862,10 +2862,44 @@ async function doUpdate(){
         setTimeout(()=>location.reload(),1500);
       }else if(j.state==="done"){
         clearInterval(t);
-        bar.innerHTML='<span>安装程序已启动，本窗口即将自动关闭…</span>';
+        bar.innerHTML='<span>安装程序已启动，正在升级到 v'+esc(UPD.latest)+'…</span>';
+        watchUpgradeDone();
       }
     }catch(e){clearInterval(t)}
   },600);
+}
+/* 安装包启动后的善后：它会先结束旧程序（本页服务断线），装完再把新版本拉起来。
+   期间轮询新服务的版本号，升级完成后尽量自动关掉本窗口；普通浏览器标签页
+   不允许脚本关窗（window.close 无效），那就自动刷新到新版本页面，绝不停在旧提示上。 */
+function watchUpgradeDone(){
+  const bar=$("#upd-bar");
+  const old=UPD?String(UPD.current):"";
+  setTimeout(()=>{try{window.close()}catch(e){}},600);
+  let n=0;
+  const t=setInterval(async()=>{
+    n++;
+    try{
+      const r=await fetch("/api/update/config",{cache:"no-store"});
+      const j=await r.json();
+      if(old&&String(j.current)!==old){
+        clearInterval(t);
+        if(bar)bar.innerHTML='<span>已升级到 v'+esc(j.current)+'，正在打开新版本…</span>';
+        showToast("升级完成：v"+esc(j.current));
+        setTimeout(()=>{
+          try{window.close()}catch(e){}
+          setTimeout(()=>{if(!window.closed&&bar)location.replace("/dashboard.html")},400);
+        },1200);
+      }
+    }catch(e){
+      // 服务断线 = 安装进行中（旧程序已被安装包结束），安静等待
+      if(bar&&n===2)bar.innerHTML='<span>正在安装新版本，请稍候…</span>';
+      if(n>150){ // 5 分钟还没起来：放弃，给出可操作的提示
+        clearInterval(t);
+        if(bar)bar.innerHTML='<span>升级没有自动完成。请手动关闭本窗口，重新打开「辅导员工作台」。</span>';
+        showToast("升级未完成，请重新打开程序",true);
+      }
+    }
+  },2000);
 }
 /* 下载源：GitHub 直连在国内时通时不通，更新包走加速镜像下载（镜像只是转发，包要做 sha256 校验）。
    这里是「一行一个前缀」，留空 = 用内置的三个默认镜像；直连永远作为最后的兜底，不需要填。 */

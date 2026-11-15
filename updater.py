@@ -354,15 +354,29 @@ def install_dir_arg(home=None):
     跟随当前程序所在目录（手工装到 D 盘、绿色版解压目录都能装回原处，data 就在 exe 旁边）；
     但当前目录在临时目录里时不传——那是解压/测试目录，装回去等于「更新永远装在临时目录」，
     就是 2.1.14 修掉的老 bug。
+    当前目录已经是安装器的默认位置（%LOCALAPPDATA%\\Programs\\辅导员工作台）时也不传：
+    安装脚本 UsePreviousAppDir=no，默认就会装到那里，传了反而多一个出错机会
+    （2.1.17 实测：/DIR 带引号经 list2cmdline 转义成字面 \\\"，Inno 报
+    「文件夹名称不能包含 \" 等字符」，静默安装弹错误框卡死）。
     """
     h = os.path.abspath(home or APP_HOME)
     tmp = os.path.abspath(tempfile.gettempdir())
     if h.lower() == tmp.lower() or h.lower().startswith(tmp.lower() + os.sep):
         return []
+    try:
+        dft = os.path.abspath(os.path.join(
+            os.environ.get("LOCALAPPDATA") or "", "Programs", "辅导员工作台"))
+        if h.lower() == dft.lower():
+            return []
+    except Exception:
+        pass
     # 只认「像工作台目录」的位置（带 data）：有人把 exe 单独拖到桌面，别把整套装到桌面上
     if not os.path.isdir(os.path.join(h, "data")):
         return []
-    return ['/DIR="%s"' % h]
+    # 注意：不要自己写引号。Popen(list) 的 list2cmdline 会把引号转义成字面 \"，
+    # Inno 收到的就是带反斜杠的非法目录名（就是 2.1.17 卡死的那个错误框）。
+    # 写成 ['/DIR=' + h]，list2cmdline 需要时会自动给整个参数加引号，Inno 两种都认。
+    return ['/DIR=' + h]
 
 
 def install_async(url, name="setup.exe", ver="", sha="", size=0):
