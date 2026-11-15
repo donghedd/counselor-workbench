@@ -185,10 +185,23 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   RC: Integer;
+  ok: Boolean;
 begin
-  if (CurStep = ssDone) and ShouldRelaunch() then
-    ShellExec('open', ExpandConstant('{app}\{#AppExe}'), '', '',
-              SW_SHOWNORMAL, ewNoWait, RC);
+  if CurStep = ssDone then
+  begin
+    Log('CurStepChanged ssDone, RELAUNCH param = ' + ExpandConstant('{param:RELAUNCH|0}'));
+    if ShouldRelaunch() then
+    begin
+      { 用 explorer.exe 代理启动：直接 ShellExec 目标 exe 时，进程仍会被
+        Setup 退出连带结束（实测服务起两秒就没了）；交给 shell（explorer）
+        创建进程，进程归 shell 所有，能长期存活。 }
+      ok := ShellExec('open', ExpandConstant('{win}\explorer.exe'),
+                      '"' + ExpandConstant('{app}\{#AppExe}') + '"', '',
+                      SW_SHOWNORMAL, ewNoWait, RC);
+      Log('ShellExec(explorer) ok=' + IntToStr(Ord(ok)) + ' rc=' + IntToStr(RC) +
+          ' file=' + ExpandConstant('{app}\{#AppExe}'));
+    end;
+  end;
 end;
 
 { 桌面快捷方式要不要建。
