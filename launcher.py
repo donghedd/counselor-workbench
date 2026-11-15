@@ -274,8 +274,36 @@ def _start_url(port):
     return "http://127.0.0.1:%d/dashboard.html" % port
 
 
+def _ensure_on_screen(h):
+    """窗口跑到屏幕外（换过显示器、改过分辨率）时挪回可见区域，否则用户会以为没打开。"""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        class RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+        r = RECT()
+        if not u.GetWindowRect(h, ctypes.byref(r)):
+            return
+        w, ht = r.right - r.left, r.bottom - r.top
+        if w <= 100 or ht <= 100:
+            return
+        sw, sh = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+        # 标题栏够得着就算在屏幕内（留给用户自己拖）
+        if 0 <= r.left < sw - 120 and 0 <= r.top < sh - 80:
+            return
+        x, y = max(0, (sw - w) // 2), max(0, (sh - ht) // 2)
+        u.SetWindowPos(h, 0, x, y, w, ht, 0x0004 | 0x0010)  # NOZORDER | NOACTIVATE
+    except Exception:
+        pass
+
+
 def _activate_existing():
-    """已有实例在跑时，把它的窗口提到前台，而不是再开一个。"""
+    """已有实例在跑时，把它的窗口提到前台。
+
+    返回 True 必须是真的把窗口摆到了用户眼前；拿不准就返回 False，
+    让调用方另开一个窗口——宁可多一个窗口，也不能出现「双击图标没反应」。
+    """
     if os.name != "nt":
         return False
     import ctypes
@@ -284,11 +312,16 @@ def _activate_existing():
     if not h:
         return False
     try:
+        u.ShowWindow(h, 5)          # SW_SHOW：窗口被藏起来也能重新显示
         if u.IsIconic(h):
-            u.ShowWindow(h, 9)     # SW_RESTORE
-        u.SetForegroundWindow(h)
+            u.ShowWindow(h, 9)      # SW_RESTORE
+        _ensure_on_screen(h)
         u.BringWindowToTop(h)
-        return True
+        u.SetForegroundWindow(h)
+        u.SwitchToThisWindow(h, True)
+        time.sleep(0.2)
+        # 只有「可见 + 确实拿到了前台」才算成功
+        return bool(u.IsWindowVisible(h)) and u.GetForegroundWindow() == h
     except Exception:
         return False
 
@@ -321,7 +354,7 @@ def main():
             if _activate_existing():
                 _log("已把现有窗口带到前台，本次启动不再新开窗口。")
                 return 0
-            _log("没找到现有窗口，另开一个窗口连过去。")
+            _log("没能把现有窗口带到前台，另开一个窗口连过去。")
         else:
             _log("服务已启动：%s" % url)
 
