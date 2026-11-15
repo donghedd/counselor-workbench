@@ -116,9 +116,10 @@ Type: dirifempty; Name: "{app}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "立即启动 {#AppName}"; Flags: nowait postinstall skipifsilent; Check: NotSilentInstall
-; 应用内自动更新：更新器带 /RELAUNCH=1 静默启动安装包，装完把新版直接拉起来，
-; 用户不用再自己点桌面图标（否则“自动更新”装完就什么都不剩，体验很怪）。
-Filename: "{app}\{#AppExe}"; Flags: nowait; Check: ShouldRelaunch
+; 应用内自动更新的「装完自动拉起新版」（更新器带 /RELAUNCH=1）不放在 [Run]：
+; Inno 会把 [Run] 启动的进程放进自己的 Job Object，静默安装 Setup 一退出
+; Job 就被终止，刚拉起的新版跟着被杀（2.1.17 实测：服务起了一秒就消失）。
+; 改在 [Code] 的 CurStepChanged 里用 ShellExec 启动——进程归 shell 所有，不受 Job 影响。
 
 [Code]
 var
@@ -176,6 +177,18 @@ end;
 function ShouldRelaunch(): Boolean;
 begin
   Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
+{ 静默更新装完后把新版拉起来。必须用 ShellExec（而不是放在 Run 段）：
+  Run 段启动的进程挂在 Setup 的 Job Object 里，静默安装 Setup 一退出
+  新版进程就跟着被终止；ShellExec 出来的进程归 shell 所有，能活下来。 }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  RC: Integer;
+begin
+  if (CurStep = ssDone) and ShouldRelaunch() then
+    ShellExec('open', ExpandConstant('{app}\{#AppExe}'), '', '',
+              SW_SHOWNORMAL, ewNoWait, RC);
 end;
 
 { 桌面快捷方式要不要建。
