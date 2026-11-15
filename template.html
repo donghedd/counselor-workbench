@@ -1019,7 +1019,7 @@ function drawStuList(){
   const title=STULIST.title,rows=STULIST.rows,ex=STULIST.extra;
   const tr=x=>'<tr onclick="stuDetail(\''+x["学号"]+'\')" style="cursor:pointer"><td>'+esc(x["学号"])+'</td><td><b>'+esc(x["姓名"])+'</b></td><td>'+esc(x["班级"])+'</td><td>'+tag(x["毕业去向"])+'</td><td>'+tag(x["去向确认状态"])+'</td><td>'+(String(x["风险标签"]||"").trim()?'<span class="tag tr">'+esc(x["风险标签"])+'</span>':'<span class="tag tgr">无</span>')+'</td><td class="small">'+esc(String(x[ex.key]||""))+'</td></tr>';
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+esc(title)+'<span class="small" style="font-weight:400;color:var(--sub)">　'+rows.length+' 人</span></h3>'+
-    (rows.length?'<div class="small" style="margin:-4px 0 8px;color:var(--sub)">点任意一行查看该学生完整详情</div><div style="max-height:56vh;overflow:auto"><table><tr><th>学号</th><th>姓名</th><th>班级</th><th>毕业去向</th><th>确认状态</th><th>风险</th><th>'+esc(ex.label)+'</th></tr>'+pgSlice("stulist",rows,10).map(tr).join("")+'</table></div>'+pgBar("stulist",rows.length,"人",10):'<div class="empty">暂无学生</div>');
+    (rows.length?'<div style="max-height:56vh;overflow:auto"><table><tr><th>学号</th><th>姓名</th><th>班级</th><th>毕业去向</th><th>确认状态</th><th>风险</th><th>'+esc(ex.label)+'</th></tr>'+pgSlice("stulist",rows,10).map(tr).join("")+'</table></div>'+pgBar("stulist",rows.length,"人",10):'<div class="empty">暂无学生</div>');
   $("#mmask").style.display="block";
 }
 PG_DRAW["stulist"]=()=>drawStuList();
@@ -1553,7 +1553,7 @@ function renderCat(){
       pager=pgBar("grad-cat",rows.length,"人",10);
     }
   }
-  $("#grad-cat-hint").textContent=(gcat==="dest"?"去向：「"+gsel+"」":gcat==="room"?(gsex==="unk"?"寝室：「外住·无原寝室」":"寝室：「"+floorLabel(gsel)+"」"):"班级：「"+String(gsel).replace("2023","'23")+"」")+"　"+rows.length+" 人"+(gcat==="room"&&gsex!=="unk"?"　（点击成员可查看该生完整信息）":gcat==="room"?"　（外住学生按表格展示）":"");
+  $("#grad-cat-hint").textContent=(gcat==="dest"?"去向：「"+gsel+"」":gcat==="room"?(gsex==="unk"?"寝室：「外住·无原寝室」":"寝室：「"+floorLabel(gsel)+"」"):"班级：「"+String(gsel).replace("2023","'23")+"」")+"　"+rows.length+" 人"+(gcat==="room"&&gsex!=="unk"?"":gcat==="room"?"　（外住学生按表格展示）":"");
   $("#grad-cat-body").innerHTML=html+pager;
   const tb=$("#thumb-btn"),miss=S.filter(x=>PHOTO[x["学号"]]&&!THUMBS.has(x["学号"])).length;
   if(tb){tb.style.display=(EDIT&&miss)?"inline-block":"none";tb.textContent="生成照片缩略图 ("+miss+")"}
@@ -2209,7 +2209,7 @@ function editStudent(sid){
       const cur=String(x[f]||"").trim()||String((ASTU[sid]||{}).year||"");
       return '<div class="k">在校学年</div><div><select class="mv" data-f="在校学年">'+
         ["1","2","3","4","5","6"].map(o=>'<option'+(o===cur?' selected':'')+'>'+o+'</option>').join("")+
-        '</select> <span class="small">第 N 学年（休学/降级后按实际年级选；保存后按该学年判定学业警示）</span></div>';
+        '</select></div>';
     }
     if(ENUM_SEL[f])return '<div class="k">'+esc(f)+'</div><div><select class="mv" data-f="'+esc(f)+'">'+[""].concat(ENUM_SEL[f]).map(o=>'<option'+((x[f]||"")===o?' selected':'')+'>'+esc(o||"(空)")+'</option>').join("")+'</select></div>';
     return '<div class="k">'+esc(f)+'</div><div><input class="mv" data-f="'+esc(f)+'" value="'+esc(x[f]||"")+'"></div>';
@@ -2244,7 +2244,7 @@ function editStudent(sid){
   const pendTip=pendNames.length?('<div class="small" style="margin:-2px 0 8px;color:var(--yellow)">该生有 <b>'+pendNames.length+'</b> 处修改还没写进表格：'+pendNames.slice(0,8).map(esc).join("、")+(pendNames.length>8?"…":"")+'（输入框标黄）。点页面下方「保存」才生效，关掉弹窗不会丢。</div>'):"";
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>编辑：'+esc(x["姓名"])+'（'+esc(x["学号"])+'）</h3>'+pendTip+
     '<div class="kv" style="grid-template-columns:150px 1fr">'+base.map(fld).join("")+
-    '<div class="k">是否外住</div><div><button class="btn" style="padding:3px 14px'+(wzOn?';background:var(--green);color:#fff':'')+'" onclick="setWzEdit(true)">是</button> <button class="btn" style="padding:3px 14px'+(wzOn?'':';background:var(--gray-bg)')+'" onclick="setWzEdit(false)">否</button> <span class="small">选「是」展开外住登记字段；不需要登记时选「否」收起（已有数据不会被删除）</span></div>'+
+    '<div class="k">是否外住</div><div><button class="btn" style="padding:3px 14px'+(wzOn?';background:var(--green);color:#fff':'')+'" onclick="setWzEdit(true)">是</button> <button class="btn" style="padding:3px 14px'+(wzOn?'':';background:var(--gray-bg)')+'" onclick="setWzEdit(false)">否</button></div>'+
     '<div id="wz-edit" style="display:'+(wzOn?"contents":"none")+'">'+wzFields.map(fld).join("")+'</div>'+
     dest.map(fld).join("")+rest.map(fld).join("")+'</div>';
   /* 基线取磁盘值，不取内存值：内存里可能已经有未保存的暂存值，
@@ -2355,7 +2355,7 @@ function xlsGridHtml(){
       g.f.map(f=>{const lock=(g.lock||[]).indexOf(f)>=0;
         return '<label><input type="checkbox" class="'+cls+'" value="'+esc(f)+'" checked'+(lock?' disabled':'')+'>'+esc(f)+'</label>'}).join("")+'</div>';
   }).join("");
-  return '<div class="xls-sec"><b>选择列</b><span class="small">（学号、姓名固定包含，用于匹配学生）</span>'+
+  return '<div class="xls-sec"><b>选择列</b>'+
     '<span class="sp"><button class="btn" onclick="xlsSetAll(true,false)">全选</button><button class="btn" onclick="xlsSetAll(true,true)">常用</button><button class="btn" onclick="xlsSetAll(false,false)">清空</button></span></div>'+
     '<div class="xls-grid">'+html+'</div>';
 }
@@ -2366,11 +2366,9 @@ function needEdit(){if(EDIT)return true;alert("该功能需要编辑模式：请
 function tplModal(){
   if(!needEdit())return;
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>下载导入模板</h3>'+
-    '<div class="small" style="margin:-2px 0 0">勾选需要的列后下载，文件里<b>只有一行标题、没有学生数据</b>，填好再用「导入表格」上传。只填要改的列，留空的单元格不会覆盖原数据。</div>'+
     xlsGridHtml()+
     '<div class="xls-row" style="margin-top:16px"><button class="btn primary" onclick="downloadXlsx(this,true)">下载空白模板</button>'+
-      '<button class="btn" onclick="closeModal()">取消</button>'+
-      '<span class="small" style="color:var(--sub)">附带「填写说明」页，列出每个字段的可选值</span></div>';
+      '<button class="btn" onclick="closeModal()">取消</button></div>';
   $("#mmask").style.display="block";$("#mbody").scrollTop=0;
 }
 
@@ -2378,7 +2376,6 @@ function tplModal(){
 function impModal(){
   if(!needEdit())return;
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>导入表格</h3>'+
-    '<div class="small" style="margin-bottom:12px">支持 .xlsx / .xlsm / .csv，第一行为表头。学生信息表按学号匹配：已存在 → 只更新填了值的列；不存在 → 新增一名学生。「谈话记录」工作表会并入谈话跟进表（同一学号+同一时间+相同内容自动跳过，不重复）。导入前自动备份学生主表到「备份」目录，导入后自动重建看板。</div>'+
     '<div class="drop" id="xls-drop"><div class="dz-t">把表格文件拖到这里</div>'+
       '<button class="btn primary" style="margin-top:10px" onclick="pickFile(\'xls-file\')">选择文件…</button>'+
       '<div class="dz-s">未填写的单元格保持原值，不影响其他字段</div></div>'+
@@ -2393,7 +2390,6 @@ function expModal(){
   if(!needEdit())return;
   const fn=filteredRows().length;
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>导出表格</h3>'+
-    '<div class="small" style="margin:-2px 0 0">选择要导出的列和数据范围，可勾选脱敏后再下载。谈话记录单独放一张工作表，导入时可原样上传补录。</div>'+
     xlsGridHtml()+
     '<div class="xls-opts">'+
       '<label><input type="checkbox" id="xp-mask" onchange="xlsMaskToggle()"> 脱敏导出（姓名「张*」、手机号中间四位隐藏、籍贯与地址只保留到市 / 区）</label>'+
