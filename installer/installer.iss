@@ -192,7 +192,10 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = wpSelectDir) and HasExistingData() then
+  { 静默安装（应用内自动更新）绝不弹这个确认框：
+    升级时 data 一定有内容，弹了就没人点，安装会永远卡住（2.1.17 实测）。
+    反正静默更新不会动 data，直接放行。 }
+  if (CurPageID = wpSelectDir) and HasExistingData() and not WizardSilent() then
   begin
     if MsgBox('检测到这个位置已经有学生数据（data 目录里有内容）。' + #13#10#13#10 +
               '继续安装只会更新程序文件，不会动你的数据，看板会在下次启动时重新生成。' + #13#10#13#10 +
