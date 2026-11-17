@@ -1178,8 +1178,13 @@ def talkplan_post(obj):
             raise ValueError("该同学已在待谈或已谈名单中")
         it["status"] = "swapped"
         it["swappedTo"] = new_sid
+        new_cls = ""
+        for c, lst in _tp_students().items():
+            if any(s["sid"] == new_sid for s in lst):
+                new_cls = c
+                break
         rd.setdefault("days", {}).setdefault(date, {"items": []})["items"].append(
-            {"sid": new_sid, "name": nm.get(new_sid, ""), "cls": cls,
+            {"sid": new_sid, "name": nm.get(new_sid, ""), "cls": new_cls or cls,
              "src": "swap", "status": "pending", "at": ""})
         _tp_save(d)
         return {"ok": True, "newSid": new_sid}
@@ -1417,6 +1422,7 @@ class Handler(SimpleHTTPRequestHandler):
                 ln = int(self.headers.get("Content-Length", 0))
                 obj = json.loads(self.rfile.read(ln).decode("utf-8"))
                 rid = save_talk(obj)
+                rebuild_dashboard()
                 self._json({"ok": True, "id": rid})
             except Exception as e:
                 self._json({"ok": False, "error": str(e)[-300:]}, 500)

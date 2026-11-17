@@ -1721,13 +1721,17 @@ function renderTalk(){
   const todayDone=((rd.days||{})[TP.today]||{items:[]}).items.filter(it=>it.status==="done");
   const sorted=[...items].sort((a,b)=>String(a.cls||"").localeCompare(String(b.cls||""))||String(a.sid).localeCompare(String(b.sid)));
   const warnCell=t=>t==="课程警示"?'<span class="tag tb">'+esc(t)+'</span>':t==="学业警示"?'<span class="tag ty">'+esc(t)+'</span>':'<span class="tag tr">'+esc(t)+'</span>';
-  /* 学业列：警示类型 + 说明（level），对应学业警示名单页的展示 */
-  const acadCell=p=>{const w=p&&p.warn;if(!w||!w.type)return '<span class="tag tg">正常</span>';
-    return warnCell(w.type)+(w.level?'<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">'+esc(w.level)+'</div>':'')};
+  /* 学业列：学业警示（类型+说明）+ 学位证警示（GPA），对应学业警示名单页的展示 */
+  const acadCell=(p,gpa)=>{const out=[];const w=p&&p.warn;
+    if(w&&w.type)out.push(warnCell(w.type));
+    const g=parseFloat(gpa);
+    if(!isNaN(g)&&g<2.5)out.push('<span class="tag '+(g<2.0?"tr":"ty")+'">学位证'+(g<2.0?"危险":"警示")+' '+esc(gpa)+'</span>');
+    if(!out.length)return '<span class="tag tg">正常</span>';
+    return out.join('<div style="height:4px"></div>')+(w&&w.level?'<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">'+esc(w.level)+'</div>':'')};
   const dayCard='<div class="panel" style="margin-top:12px"><b>'+(rd.status==="active"?"今日待谈（"+esc(TP.today)+"）":"待谈任务")+'</b>'+
     (sorted.length?'<table style="margin-top:10px"><tr><th>班级</th><th>姓名</th><th>学号</th><th>去向</th><th>学业</th><th style="width:110px">操作</th></tr>'+
       sorted.map(x=>{const s=tpStu(x.sid),p=ASTU[x.sid];
-        return '<tr style="cursor:pointer" onclick="stuDetail(\''+x.sid+'\')"><td>'+esc(x.cls||s["班级"]||"")+'</td><td><b>'+esc(x.name||s["姓名"]||"")+'</b></td><td>'+esc(x.sid)+'</td><td>'+tag(s["毕业去向"])+'</td><td>'+acadCell(p)+'</td>'+
+        return '<tr style="cursor:pointer" onclick="stuDetail(\''+x.sid+'\')"><td>'+esc(x.cls||s["班级"]||"")+'</td><td><b>'+esc(x.name||s["姓名"]||"")+'</b></td><td>'+esc(x.sid)+'</td><td>'+tag(s["毕业去向"])+'</td><td>'+acadCell(p,s["GPA"])+'</td>'+
           '<td onclick="event.stopPropagation()"><a href="javascript:void(0)" onclick="talkDoneModal(\''+x.sid+'\',\''+x.date+'\')">谈话</a> <a href="javascript:void(0)" onclick="talkSwapModal(\''+x.sid+'\',\''+x.date+'\')">更换</a></td></tr>';
       }).join("")+'</table>'
       :(rd.status==="active"?'<div class="empty" style="margin-top:8px">今天没有待谈任务，全部班级都已抽完或已谈完</div>'
@@ -1774,24 +1778,61 @@ async function talkDoneGo(sid,date){
   try{
     const d=new Date(),pad=n=>String(n).padStart(2,"0");
     const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
-    await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
+    const j=await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})}).then(r=>r.json());
+    if(!j.ok)throw new Error(j.error||"保存失败");
+    /* 同步进内存列表，学生详情的「谈话跟进」才能立刻看到 */
+    const stu=tpStu(sid);
+    TK.push({_i:TK.length,"记录ID":String(j.id||""),"学号":sid,"姓名":stu["姓名"]||"","谈话时间":when,"谈话方式":way,"谈话内容":c,"更新时间":when});
     await talkAct({action:"done",roundId:TP_CUR,sid:sid,date:date});
     closeModal();showToast("谈话记录已新增，本轮不会再抽到他");
   }catch(e){showToast(e.message||"操作失败",true)}
 }
+/* 更换谈话对象：搜索姓名/学号任选（不限本班），也可随机换同班一人 */
+let TP_SWAP_SID="",TP_SWAP_CTX=null;
 function talkSwapModal(sid,date){
+  TP_SWAP_SID="";TP_SWAP_CTX={sid:sid,date:date};
   const rd=tpRd(),x=tpStu(sid),cls=x["班级"]||"";
-  const done=new Set(rd.done.map(d=>d.sid));
-  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
-  const cand=S.filter(s=>s["班级"]===cls&&s["学号"]!==sid&&!done.has(s["学号"])&&!open.has(s["学号"]));
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>更换谈话对象</h3>'+
     '<p style="margin-bottom:10px">把 <b>'+esc(x["姓名"]||sid)+'</b>（'+esc(cls)+'）换成：</p>'+
-    (cand.length?'<label class="fld"><span class="lb">选择本班其他同学</span><select id="tp-new">'+cand.map(s=>'<option value="'+esc(s["学号"])+'">'+esc(s["姓名"])+'</option>').join("")+'</select></label>'+
+    '<label class="fld"><span class="lb">搜索姓名或学号</span><input id="tp-q" autocomplete="off" placeholder="输入姓名或学号筛选（不限于本班）" oninput="tpSwapSearch()"></label>'+
+    '<div id="tp-results" class="tp-cands"></div>'+
+    '<div id="tp-picked" style="margin:6px 0 10px"></div>'+
     '<div class="acts"><button class="btn" onclick="closeModal()">取消</button>'+
-    '<button class="btn" onclick="talkSwapGo(\''+sid+'\',\''+date+'\',\'\')">随机换一个</button>'+
-    '<button class="btn primary" onclick="talkSwapGo(\''+sid+'\',\''+date+'\',$(\'#tp-new\').value)">确认更换</button></div>'
-    :'<div class="empty">这个班里没有可换的同学了（其他同学都已谈过或在待谈名单里）</div>');
+    '<button class="btn" onclick="talkSwapGo(\''+sid+'\',\''+date+'\',\'\')">随机换本班一人</button>'+
+    '<button class="btn primary" onclick="tpSwapConfirm()">确认更换</button></div>';
   $("#mmask").style.display="block";
+  setTimeout(()=>{const q=$("#tp-q");if(q)q.focus()},50);
+}
+function tpSwapConfirm(){
+  if(!TP_SWAP_SID){showToast("请先搜索并选择一位同学",true);return}
+  talkSwapGo(TP_SWAP_CTX.sid,TP_SWAP_CTX.date,TP_SWAP_SID);
+}
+function tpSwapSearch(){
+  if(!TP_SWAP_CTX)return;
+  const rd=tpRd();
+  const q=($("#tp-q").value||"").trim().toLowerCase();
+  const curSid=TP_SWAP_CTX.sid;
+  const done=new Set(rd.done.map(d=>d.sid));
+  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
+  const cand=!q?[]:S.filter(x=>
+    (String(x["姓名"]||"").toLowerCase().indexOf(q)>=0||String(x["学号"]||"").indexOf(q)>=0)
+    &&String(x["学号"])!==String(curSid)&&!done.has(x["学号"])&&!open.has(x["学号"])
+  ).slice(0,20);
+  $("#tp-results").innerHTML=cand.length?cand.map(x=>
+    '<div class="tp-cand'+(TP_SWAP_SID===x["学号"]?" sel":"")+'" onclick="tpSwapPick(\''+x["学号"]+'\')">'+
+    '<b>'+esc(x["姓名"])+'</b><span class="small">'+esc(x["班级"]||"")+' · '+esc(x["学号"])+'</span></div>'
+  ).join(""):'<div class="small" style="color:#8a93a3;padding:8px 2px">'+(q?"没有匹配的同学（已谈过或在待谈名单里的不显示）":"输入姓名或学号后从下面选择")+'</div>';
+}
+function tpSwapPick(sid){
+  TP_SWAP_SID=sid;
+  const x=tpStu(sid);
+  $("#tp-picked").innerHTML='已选：<b>'+esc(x["姓名"]||sid)+'</b>（'+esc(x["班级"]||"")+' · '+esc(sid)+'） <a href="javascript:void(0)" onclick="tpSwapClear()">重选</a>';
+  tpSwapSearch();
+}
+function tpSwapClear(){
+  TP_SWAP_SID="";
+  $("#tp-picked").innerHTML="";
+  tpSwapSearch();
 }
 async function talkSwapGo(sid,date,newSid){
   try{
@@ -1851,7 +1892,11 @@ async function talkAddGo(){
     const date=it?it.date:TP.today;
     const d=new Date(),pad=n=>String(n).padStart(2,"0");
     const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
-    await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
+    const j=await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})}).then(r=>r.json());
+    if(!j.ok)throw new Error(j.error||"保存失败");
+    /* 同步进内存列表，学生详情的「谈话跟进」才能立刻看到 */
+    const stu=tpStu(sid);
+    TK.push({_i:TK.length,"记录ID":String(j.id||""),"学号":sid,"姓名":stu["姓名"]||"","谈话时间":when,"谈话方式":way,"谈话内容":c,"更新时间":when});
     if(!it)await talkAct({action:"add",roundId:TP_CUR,sid:sid,date:TP.today});
     await talkAct({action:"done",roundId:TP_CUR,sid:sid,date:date});
     closeModal();showToast("谈话记录已新增，本轮不会再抽到他");
