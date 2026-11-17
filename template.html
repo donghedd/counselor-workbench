@@ -1726,7 +1726,7 @@ function renderTalk(){
                '<span class="tag ty">顺延中</span>';
       return '<span class="tp-hist" onclick="stuDetail(\''+it.sid+'\')"><b>'+esc(it.name)+'</b>'+st+'</span>';
     }).join("")+'</div>').join(""):'<div class="empty">还没有任务记录</div>')+'</div>';
-  root.innerHTML=bar+'<div class="cards" style="margin-top:12px"><div id="tp-kpi"></div></div>'+dayCard+hist;
+  root.innerHTML=bar+'<div class="cards" style="margin-top:12px"><div id="tp-kpi" style="display:contents"></div></div>'+dayCard+hist;
   kpi("#tp-kpi",[
     {v:doneN,l:"本轮已谈",c:"g"},
     {v:items.length,l:rd.status==="active"?"今日待谈（含顺延）":"待谈",c:items.length?"y":"b"},
