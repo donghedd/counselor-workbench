@@ -1053,11 +1053,21 @@ def _tp_open_sids(rd):
 
 
 def _tp_gen_day(rd, date):
-    """date 当天的抽取还没生成过 → 每班随机抽 1 人并持久化（同一天结果不变）。"""
+    """date 当天的抽取还没生成过 → 每班随机抽 1 人并持久化（同一天结果不变）。
+
+    之前还有没谈完的顺延任务时，当天不再新增抽取，只谈积压的这些；
+    占一个空 day 记录把当天锁住（当天补完也不另外抽新的）。
+    """
     if rd.get("status") != "active" or date < rd.get("startDate", ""):
         return
     days = rd.setdefault("days", {})
     if date in days:
+        return
+    carry = any(it.get("status") in ("pending", "postponed")
+                for d, day in days.items() if d < date
+                for it in day.get("items", []))
+    if carry:
+        days[date] = {"items": []}
         return
     done = {x["sid"] for x in rd.get("done", [])}
     open_sids = _tp_open_sids(rd)

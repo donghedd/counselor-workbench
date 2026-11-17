@@ -435,6 +435,11 @@ nav .tab.active + .subnav{display:flex}
 .member .wz{background:var(--yellow-bg);color:var(--yellow);font-size:10px;padding:0 5px;border-radius:5px;font-weight:700}
 /* 谈心谈话 */
 .tp-cls{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px}
+.tp-cands{max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:10px;margin-bottom:4px}
+.tp-cand{display:flex;align-items:baseline;gap:10px;padding:8px 10px;cursor:pointer;border-top:1px solid var(--line);font-size:13px}
+.tp-cand:first-child{border-top:0}
+.tp-cand:hover{background:#f4f7fc}
+.tp-cand.sel{background:rgba(42,91,215,.10)}
 .tp-h{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
 .tp-h .n{color:var(--sub);font-weight:400;font-size:12px}
 .tp-item{display:flex;align-items:center;gap:6px;padding:7px 8px;border-top:1px solid var(--line);font-size:13px;flex-wrap:wrap}
@@ -1678,7 +1683,10 @@ async function talkLoad(){
   if($("#gv-talk").style.display==="block")renderTalk();
 }
 async function talkAct(p){
-  const r=await fetch("/api/talkplan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  let r;
+  try{
+    r=await fetch("/api/talkplan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  }catch(e){throw new Error("连接不上本地服务，请关掉页面后通过桌面图标重新打开程序再试")}
   const j=await r.json();
   if(!j.ok)throw new Error(j.error||"操作失败");
   await talkLoad();
@@ -1707,26 +1715,30 @@ function renderTalk(){
     '<div class="seg-group">'+segs+'</div>'+
     '<span style="margin-left:8px">'+(rd.status==="active"?'<span class="tag ty">进行中 · 自 '+esc(rd.startDate)+' 起</span>':'<span class="tag tg">已结束 · '+esc(rd.finishedAt||"")+'</span>')+'</span>'+
     '<span style="margin-left:auto;display:flex;gap:8px">'+
-    (rd.status==="active"?'<button class="btn" onclick="talkAddModal()">新增谈话对象</button><button class="btn" onclick="talkFinish()">结束本轮</button>':'')+
+    (rd.status==="active"?'<button class="btn" onclick="talkAddModal()">新增谈话记录</button><button class="btn" onclick="talkFinish()">结束本轮</button>':'')+
     '</span></div>';
-  /* 今日待谈：按班级分组 */
+  /* 今日待谈：按班级分组；今天已谈的（含通过新增谈话对象直接谈完的）也列在下面 */
   const byCls={};
   items.forEach(x=>{(byCls[x.cls]=byCls[x.cls]||[]).push(x)});
+  const todayDone=((rd.days||{})[TP.today]||{items:[]}).items.filter(it=>it.status==="done");
   const dayCard='<div class="panel" style="margin-top:12px"><b>'+(rd.status==="active"?"今日待谈（"+esc(TP.today)+"）":"待谈任务")+'</b>'+
     (items.length?'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin-top:10px">'+
       Object.keys(byCls).sort().map(cls=>'<div class="tp-cls"><div class="tp-h">'+esc(cls)+' <span class="n">'+byCls[cls].length+' 人</span></div>'+
         byCls[cls].map(tpItemHtml).join("")+'</div>').join("")+'</div>'
       :(rd.status==="active"?'<div class="empty" style="margin-top:8px">今天没有待谈任务，全部班级都已抽完或已谈完</div>'
-        :'<div style="text-align:center;margin-top:10px"><button class="btn primary" onclick="talkStartModal()">开启下一轮谈话</button></div>'))+'</div>';
+        :'<div style="text-align:center;margin-top:10px"><button class="btn primary" onclick="talkStartModal()">开启下一轮谈话</button></div>'))+
+    (todayDone.length?'<div style="margin-top:14px"><div class="tp-h" style="margin-bottom:6px">今日已谈 <span class="n">'+todayDone.length+' 人</span></div>'+
+      todayDone.map(it=>'<span class="tp-hist" onclick="stuDetail(\''+it.sid+'\')"><b>'+esc(it.name)+'</b><span class="tag tg">已谈</span></span>').join("")+'</div>':'')+
+    '</div>';
   /* 历史任务（仅进行中的轮次显示；结束后只留开启下一轮的入口） */
-  const days=Object.keys(rd.days||{}).sort().reverse();
-  const hist=rd.status==="active"?'<div class="panel" style="margin-top:12px"><b>历史任务</b><span class="small">　点姓名查看学生详情</span>'+
-    (days.length?days.map(d=>'<div class="tp-day"><b>'+d+'</b>'+rd.days[d].items.map(it=>{
+  const days=Object.keys(rd.days||{}).sort().reverse().filter(d=>(rd.days[d].items||[]).length);
+  const hist=rd.status==="active"&&days.length?'<div class="panel" style="margin-top:12px"><b>历史任务</b><span class="small">　点姓名查看学生详情</span>'+
+    days.map(d=>'<div class="tp-day"><b>'+d+'</b>'+rd.days[d].items.map(it=>{
       const st=it.status==="done"?'<span class="tag tg">已谈</span>':
                it.status==="swapped"?'<span class="tag tgr">已更换 → '+esc(tpStu(it.swappedTo)["姓名"]||it.swappedTo||"")+'</span>':
                '<span class="tag ty">顺延中</span>';
       return '<span class="tp-hist" onclick="stuDetail(\''+it.sid+'\')"><b>'+esc(it.name)+'</b>'+st+'</span>';
-    }).join("")+'</div>').join(""):'<div class="empty">还没有任务记录</div>')+'</div>':'';
+    }).join("")+'</div>').join("")+'</div>':'';
   root.innerHTML=bar+'<div class="cards" style="margin-top:12px"><div id="tp-kpi" style="display:contents"></div></div>'+dayCard+hist;
   /* 三张统计卡都可点：弹出对应名单 */
   const doneRows=()=>S.filter(x=>rd.done.some(d=>String(d.sid)===String(x["学号"])));
@@ -1738,9 +1750,8 @@ function renderTalk(){
   ]);
 }
 function tpItemHtml(x){
-  const src=x.src==="extra"?'<span class="tag tb">手动新增</span>':x.src==="swap"?'<span class="tag tb">更换进来</span>':'<span class="tag tgr">每日抽取</span>';
   const lag=x.lag>0?'<span class="tag ty">顺延 '+x.lag+' 天</span>':'';
-  return '<div class="tp-item"><span class="tp-name" onclick="stuDetail(\''+x.sid+'\')">'+esc(x.name)+'</span>'+src+lag+
+  return '<div class="tp-item"><span class="tp-name" onclick="stuDetail(\''+x.sid+'\')">'+esc(x.name)+'</span><span class="tag tgr">暂未谈话</span>'+lag+
     '<span class="tp-acts">'+
     '<a href="javascript:void(0)" onclick="talkDoneModal(\''+x.sid+'\',\''+x.date+'\')">谈话</a>'+
     '<a href="javascript:void(0)" onclick="talkSwapModal(\''+x.sid+'\',\''+x.date+'\')">更换</a></span></div>';
@@ -1799,33 +1810,62 @@ async function talkSwapGo(sid,date,newSid){
     closeModal();showToast("已换成 "+(tpStu(j.newSid)["姓名"]||j.newSid));
   }catch(e){showToast(e.message||"操作失败",true)}
 }
+/* 新增谈话对象：搜姓名/学号 → 选中 → 填谈话内容 → 保存 = 新增谈话记录并记为已谈 */
+let TP_ADD_SID="";
 function talkAddModal(){
-  const rd=tpRd();
-  const done=new Set(rd.done.map(d=>d.sid));
-  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
-  const classes=[...new Set(S.map(x=>x["班级"]).filter(Boolean))].sort();
-  const date='<label class="fld"><span class="lb">谈话日期<em>默认今天</em></span><input id="tp-add-date" type="date" value="'+TP.today+'"></label>';
-  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>新增谈话对象</h3>'+
-    '<label class="fld"><span class="lb">班级</span><select id="tp-add-cls" onchange="tpAddFill()">'+classes.map(c=>'<option>'+esc(c)+'</option>').join("")+'</select></label>'+
-    '<label class="fld"><span class="lb">同学</span><select id="tp-add-sid"></select></label>'+date+
-    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkAddGo()">新增</button></div>';
-  tpAddFill();
+  TP_ADD_SID="";
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>新增谈话记录</h3>'+
+    '<label class="fld"><span class="lb">搜索姓名或学号</span><input id="tp-q" autocomplete="off" placeholder="输入姓名或学号筛选" oninput="tpSearchFill()"></label>'+
+    '<div id="tp-results" class="tp-cands"></div>'+
+    '<div id="tp-form" style="display:none">'+
+      '<div id="tp-picked" style="margin:6px 0 10px"></div>'+
+      '<label class="fld"><span class="lb">谈话方式</span><select id="tp-way">'+TALK_WAYS.map(w=>'<option>'+w+'</option>').join("")+'</select></label>'+
+      '<label class="fld"><span class="lb">谈话内容</span><textarea id="tp-content" rows="3" placeholder="记录本次谈话的内容要点（保存后记入「谈话跟进表」）"></textarea></label>'+
+    '</div>'+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkAddGo()">保存谈话记录</button></div>';
   $("#mmask").style.display="block";
+  setTimeout(()=>{const q=$("#tp-q");if(q)q.focus()},50);
 }
-function tpAddFill(){
-  const rd=tpRd();
-  const done=new Set(rd.done.map(d=>d.sid));
-  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
-  const cls=$("#tp-add-cls").value;
-  const cand=S.filter(x=>x["班级"]===cls&&!done.has(x["学号"])&&!open.has(x["学号"]));
-  $("#tp-add-sid").innerHTML=cand.length?cand.map(s=>'<option value="'+esc(s["学号"])+'">'+esc(s["姓名"])+'</option>').join(""):'<option value="">（这个班都谈过了）</option>';
+function tpSearchFill(){
+  const q=($("#tp-q").value||"").trim().toLowerCase();
+  const done=new Set(tpRd().done.map(d=>d.sid));
+  const cand=!q?[]:S.filter(x=>String(x["姓名"]||"").toLowerCase().indexOf(q)>=0||String(x["学号"]||"").indexOf(q)>=0).slice(0,20);
+  $("#tp-results").innerHTML=cand.length?cand.map(x=>{
+    const dis=done.has(x["学号"]);
+    return '<div class="tp-cand'+(TP_ADD_SID===x["学号"]?" sel":"")+'" '+(dis?'style="opacity:.45"':'onclick="tpPick(\''+x["学号"]+'\')"')+'>'+
+      '<b>'+esc(x["姓名"])+'</b><span class="small">'+esc(x["班级"]||"")+' · '+esc(x["学号"])+(dis?' · 本轮已谈过':'')+'</span></div>';
+  }).join(""):'<div class="small" style="color:#8a93a3;padding:8px 2px">'+(q?"没有匹配的同学":"输入姓名或学号后从下面选择")+'</div>';
+}
+function tpPick(sid){
+  TP_ADD_SID=sid;
+  const x=tpStu(sid);
+  $("#tp-picked").innerHTML='已选：<b>'+esc(x["姓名"]||sid)+'</b>（'+esc(x["班级"]||"")+' · '+esc(sid)+'） <a href="javascript:void(0)" onclick="tpPickClear()">重选</a>';
+  $("#tp-form").style.display="";
+  tpSearchFill();
+  const t=$("#tp-content");if(t)t.focus();
+}
+function tpPickClear(){
+  TP_ADD_SID="";
+  $("#tp-form").style.display="none";
+  $("#tp-picked").innerHTML="";
+  tpSearchFill();
 }
 async function talkAddGo(){
-  const sid=$("#tp-add-sid").value;
-  if(!sid){showToast("这个班没有可选的同学",true);return}
+  const sid=TP_ADD_SID;
+  if(!sid){showToast("请先搜索并选择一位同学",true);return}
+  const way=$("#tp-way").value, c=($("#tp-content").value||"").trim();
+  if(!c){showToast("请填写谈话内容",true);return}
   try{
-    await talkAct({action:"add",roundId:TP_CUR,sid:sid,date:$("#tp-add-date").value||TP.today});
-    closeModal();showToast("已加入待谈名单");
+    const rd=tpRd();
+    const open=(TP.view||{})[String(rd.id)]||[];
+    const it=open.find(i=>i.sid===sid);
+    const date=it?it.date:TP.today;
+    const d=new Date(),pad=n=>String(n).padStart(2,"0");
+    const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
+    await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
+    if(!it)await talkAct({action:"add",roundId:TP_CUR,sid:sid,date:TP.today});
+    await talkAct({action:"done",roundId:TP_CUR,sid:sid,date:date});
+    closeModal();showToast("谈话记录已新增，本轮不会再抽到他");
   }catch(e){showToast(e.message||"操作失败",true)}
 }
 async function talkFinish(){
