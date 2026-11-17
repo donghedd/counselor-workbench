@@ -1053,35 +1053,38 @@ def _tp_open_sids(rd):
 
 
 def _tp_gen_day(rd, date):
-    """date 当天的抽取还没生成过 → 每班随机抽 1 人并持久化（同一天结果不变）。
+    """date 当天的抽取还没生成过 → 每班抽 1 人并持久化（同一天结果不变）。
 
-    之前还有没谈完的顺延任务时，当天不再新增抽取，只谈积压的这些；
-    占一个空 day 记录把当天锁住（当天补完也不另外抽新的）。
+    规则：某个班之前抽的人还没谈，这个班当天就不抽新的（旧的顺延继续谈）；
+    谈完了（或之前没抽过）才抽新的。当天补谈完也不另外补抽，第二天再抽。
     """
     if rd.get("status") != "active" or date < rd.get("startDate", ""):
         return
     days = rd.setdefault("days", {})
     if date in days:
         return
-    carry = any(it.get("status") in ("pending", "postponed")
-                for d, day in days.items() if d < date
-                for it in day.get("items", []))
-    if carry:
-        days[date] = {"items": []}
-        return
     done = {x["sid"] for x in rd.get("done", [])}
     open_sids = _tp_open_sids(rd)
     nm = _tp_name_map()
+    # 之前抽的还没谈的班 → 今天这个班不抽新的
+    busy_cls = set()
+    for d, day in days.items():
+        if d >= date:
+            continue
+        for it in day.get("items", []):
+            if it.get("status") in ("pending", "postponed"):
+                busy_cls.add(it.get("cls", ""))
     items = []
     for cls, pool in (rd.get("pool") or {}).items():
+        if cls in busy_cls:
+            continue
         avail = [s for s in pool if s not in done and s not in open_sids]
         if not avail:
             continue
         sid = random.choice(avail)
         items.append({"sid": sid, "name": nm.get(sid, ""), "cls": cls,
                       "src": "auto", "status": "pending", "at": ""})
-    if items:
-        days[date] = {"items": items}
+    days[date] = {"items": items}
 
 
 def _tp_view(rd, date):
