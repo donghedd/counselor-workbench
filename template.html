@@ -1708,29 +1708,33 @@ function renderTalk(){
     '<span style="margin-left:8px">'+(rd.status==="active"?'<span class="tag ty">进行中 · 自 '+esc(rd.startDate)+' 起</span>':'<span class="tag tg">已结束 · '+esc(rd.finishedAt||"")+'</span>')+'</span>'+
     '<span style="margin-left:auto;display:flex;gap:8px">'+
     (rd.status==="active"?'<button class="btn" onclick="talkAddModal()">新增谈话对象</button><button class="btn" onclick="talkFinish()">结束本轮</button>':'')+
-    '<button class="btn danger" onclick="talkDelete()">删除本轮</button></span></div>';
+    '</span></div>';
   /* 今日待谈：按班级分组 */
   const byCls={};
   items.forEach(x=>{(byCls[x.cls]=byCls[x.cls]||[]).push(x)});
-  const dayCard='<div class="panel" style="margin-top:12px"><b>'+(rd.status==="active"?"今日待谈（"+esc(TP.today)+"）":"待谈任务")+'</b><span class="small">　没谈的第二天会继续出现，点「已谈」后本轮不再抽他</span>'+
+  const dayCard='<div class="panel" style="margin-top:12px"><b>'+(rd.status==="active"?"今日待谈（"+esc(TP.today)+"）":"待谈任务")+'</b>'+
     (items.length?'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin-top:10px">'+
       Object.keys(byCls).sort().map(cls=>'<div class="tp-cls"><div class="tp-h">'+esc(cls)+' <span class="n">'+byCls[cls].length+' 人</span></div>'+
         byCls[cls].map(tpItemHtml).join("")+'</div>').join("")+'</div>'
-      :'<div class="empty" style="margin-top:8px">'+(rd.status==="active"?"今天没有待谈任务，全部班级都已抽完或已谈完":"本轮已结束")+'</div>')+'</div>';
-  /* 历史任务 */
+      :(rd.status==="active"?'<div class="empty" style="margin-top:8px">今天没有待谈任务，全部班级都已抽完或已谈完</div>'
+        :'<div style="text-align:center;margin-top:10px"><button class="btn primary" onclick="talkStartModal()">开启下一轮谈话</button></div>'))+'</div>';
+  /* 历史任务（仅进行中的轮次显示；结束后只留开启下一轮的入口） */
   const days=Object.keys(rd.days||{}).sort().reverse();
-  const hist='<div class="panel" style="margin-top:12px"><b>历史任务</b><span class="small">　点姓名查看学生详情</span>'+
+  const hist=rd.status==="active"?'<div class="panel" style="margin-top:12px"><b>历史任务</b><span class="small">　点姓名查看学生详情</span>'+
     (days.length?days.map(d=>'<div class="tp-day"><b>'+d+'</b>'+rd.days[d].items.map(it=>{
       const st=it.status==="done"?'<span class="tag tg">已谈</span>':
                it.status==="swapped"?'<span class="tag tgr">已更换 → '+esc(tpStu(it.swappedTo)["姓名"]||it.swappedTo||"")+'</span>':
                '<span class="tag ty">顺延中</span>';
       return '<span class="tp-hist" onclick="stuDetail(\''+it.sid+'\')"><b>'+esc(it.name)+'</b>'+st+'</span>';
-    }).join("")+'</div>').join(""):'<div class="empty">还没有任务记录</div>')+'</div>';
+    }).join("")+'</div>').join(""):'<div class="empty">还没有任务记录</div>')+'</div>':'';
   root.innerHTML=bar+'<div class="cards" style="margin-top:12px"><div id="tp-kpi" style="display:contents"></div></div>'+dayCard+hist;
+  /* 三张统计卡都可点：弹出对应名单 */
+  const doneRows=()=>S.filter(x=>rd.done.some(d=>String(d.sid)===String(x["学号"])));
+  const pendRows=()=>S.filter(x=>items.some(i=>String(i.sid)===String(x["学号"])));
   kpi("#tp-kpi",[
-    {v:doneN,l:"本轮已谈",c:"g"},
-    {v:items.length,l:rd.status==="active"?"今日待谈（含顺延）":"待谈",c:items.length?"y":"b"},
-    {v:pct+"%",l:"进度（共 "+total+" 人）",c:"b"},
+    {v:doneN,l:"本轮已谈",c:"g",on:doneRows},
+    {v:items.length,l:rd.status==="active"?"今日待谈（含顺延）":"待谈",c:items.length?"y":"b",on:pendRows},
+    {v:pct+"%",l:"进度（共 "+total+" 人）",c:"b",on:doneRows},
   ]);
 }
 function tpItemHtml(x){
@@ -1738,7 +1742,7 @@ function tpItemHtml(x){
   const lag=x.lag>0?'<span class="tag ty">顺延 '+x.lag+' 天</span>':'';
   return '<div class="tp-item"><span class="tp-name" onclick="stuDetail(\''+x.sid+'\')">'+esc(x.name)+'</span>'+src+lag+
     '<span class="tp-acts">'+
-    '<a href="javascript:void(0)" onclick="talkDoneModal(\''+x.sid+'\',\''+x.date+'\')">已谈</a>'+
+    '<a href="javascript:void(0)" onclick="talkDoneModal(\''+x.sid+'\',\''+x.date+'\')">谈话</a>'+
     '<a href="javascript:void(0)" onclick="talkSwapModal(\''+x.sid+'\',\''+x.date+'\')">更换</a></span></div>';
 }
 function talkStartModal(){
@@ -1758,22 +1762,21 @@ async function talkStartGo(){
 }
 function talkDoneModal(sid,date){
   const x=tpStu(sid);
-  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>谈话完成 · '+esc(x["姓名"]||sid)+'（'+esc(x["班级"]||"")+'）</h3>'+
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>新增谈话记录 · '+esc(x["姓名"]||sid)+'（'+esc(x["班级"]||"")+'）</h3>'+
     '<label class="fld"><span class="lb">谈话方式</span><select id="tp-way">'+TALK_WAYS.map(w=>'<option>'+w+'</option>').join("")+'</select></label>'+
-    '<label class="fld"><span class="lb">谈话内容<em>可选</em></span><textarea id="tp-content" rows="3" placeholder="填写后会同时记入「谈话跟进表」"></textarea></label>'+
-    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkDoneGo(\''+sid+'\',\''+date+'\')">确认已谈</button></div>';
+    '<label class="fld"><span class="lb">谈话内容</span><textarea id="tp-content" rows="3" placeholder="记录本次谈话的内容要点（保存后记入「谈话跟进表」）"></textarea></label>'+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkDoneGo(\''+sid+'\',\''+date+'\')">保存谈话记录</button></div>';
   $("#mmask").style.display="block";
 }
 async function talkDoneGo(sid,date){
   const way=$("#tp-way").value, c=($("#tp-content").value||"").trim();
+  if(!c){showToast("请填写谈话内容",true);return}
   try{
-    if(c){
-      const d=new Date(),pad=n=>String(n).padStart(2,"0");
-      const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
-      await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
-    }
+    const d=new Date(),pad=n=>String(n).padStart(2,"0");
+    const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
+    await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
     await talkAct({action:"done",roundId:TP_CUR,sid:sid,date:date});
-    closeModal();showToast("已记为谈过，本轮不会再抽到他");
+    closeModal();showToast("谈话记录已新增，本轮不会再抽到他");
   }catch(e){showToast(e.message||"操作失败",true)}
 }
 function talkSwapModal(sid,date){
@@ -1828,11 +1831,6 @@ async function talkAddGo(){
 async function talkFinish(){
   if(!confirm("确定结束本轮谈话吗？结束后不再生成每日抽取。"))return;
   try{await talkAct({action:"finish",roundId:TP_CUR});showToast("本轮已结束")}catch(e){showToast(e.message||"操作失败",true)}
-}
-async function talkDelete(){
-  const rd=tpRd();
-  if(!confirm("确定删除第 "+rd.no+" 轮吗？该轮的全部记录（含已谈名单）都会删除。"))return;
-  try{await talkAct({action:"delete",roundId:TP_CUR});TP_CUR=null;showToast("已删除")}catch(e){showToast(e.message||"操作失败",true)}
 }
 
 const GNAV={all:"gv-all",class:"gv-board",committee:"gv-committee",dest:"gv-board",room:"gv-board",waizhu:"gv-waizhu",talk:"gv-talk",study:"gv-study"};
