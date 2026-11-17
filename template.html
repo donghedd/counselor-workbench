@@ -133,6 +133,7 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .tg{background:var(--green-bg);color:var(--green)}.ty{background:var(--yellow-bg);color:var(--yellow)}
 .tr{background:var(--red-bg);color:var(--red)}.tgr{background:var(--gray-bg);color:var(--gray)}
 .tb{background:var(--blue-bg);color:var(--blue)}
+.tpu{background:#f3ecff;color:#7b46c9}
 /* ---------- 筛选 ---------- */
 .filters{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
 .filters select,.filters input{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--txt);font-size:13px;outline:none;transition:border-color .15s,box-shadow .15s}
@@ -149,6 +150,7 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .ac-seg-i[data-type="学业警示"].on{background:#c8871a}
 .ac-seg-i[data-type="留级警示"].on{background:#d2642b}
 .ac-seg-i[data-type="退学警示"].on{background:#bd3b2f}
+.ac-seg-i[data-type="学位证警示"].on{background:#7b46c9}
 /* ---------- 分页 ---------- */
 .pager{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 2px 4px;border-top:1px solid var(--line);margin-top:6px}
 .pager .btn{padding:4px 10px;font-size:12px}
@@ -658,6 +660,7 @@ nav .tab.active + .subnav{display:flex}
                   <button class="ac-seg-i" data-type="学业警示" onclick="acTypeToggle('学业警示')">学业警示<span class="n">0</span></button>
                   <button class="ac-seg-i" data-type="退学警示" onclick="acTypeToggle('退学警示')">退学警示<span class="n">0</span></button>
                   <button class="ac-seg-i" data-type="留级警示" onclick="acTypeToggle('留级警示')">留级警示<span class="n">0</span></button>
+                  <button class="ac-seg-i" data-type="学位证警示" onclick="acTypeToggle('学位证警示')">学位证警示<span class="n">0</span></button>
                 </div>
                 <select id="ac-filter-class"><option value="">全部班级</option></select>
                 <button class="btn" id="ac-grades-btn" style="display:none" onclick="acImportModal('grades')">导入成绩</button>
@@ -1976,7 +1979,7 @@ if($("#gn-wz-n"))$("#gn-wz-n").textContent=cnt(S,x=>x["外住_审批状态"]);
 const AC=DATA.academic||{},ACPL=AC.plans||{},ANA=AC.analysis||{},ASTU=ANA.students||{},ACWARN=AC.warnings||[],THRESH=AC.thresholds||{},ANAPC=ANA.planCourses||{};
 const acRec=sid=>ASTU[sid];
 const acManualOf=sid=>ACWARN.filter(r=>r["学号"]===sid);
-const acWarnStudents=(()=>{const s=new Set();Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)s.add(sid)});ACWARN.forEach(r=>{if(r["学号"])s.add(r["学号"])});return s})();
+const acWarnStudents=(()=>{const s=new Set();Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)s.add(sid)});ACWARN.forEach(r=>{if(r["学号"])s.add(r["学号"])});S.forEach(x=>{const g=parseFloat(x["GPA"]);if(!isNaN(g)&&g<2.5&&x["学号"])s.add(String(x["学号"]))});return s})();
 if($("#bn-ac"))$("#bn-ac").textContent=acWarnStudents.size||"—";
 let acTypesF=[],acClassF="";
 PG_DRAW["ac-warn"]=()=>acWarnTable();
@@ -1984,6 +1987,11 @@ function acAllRows(){
   const rows=[];
   Object.keys(ASTU).forEach(sid=>{const p=ASTU[sid];if(p.warn&&p.warn.type)rows.push({sid:sid,name:p.name||nameOfSid(sid),cls:p.class||(S.find(x=>x["学号"]===sid)||{})["班级"]||"",year:p.year,earned:p.earned,valid:p.valid,fn:(p.failed||[]).length,mn:(p.missing||[]).length,ue:(p.unearned?(((p.unearned.g||[]).length)+((p.unearned.c||[]).length)):((p.failed||[]).length+(p.missing||[]).length)),type:p.warn.type,lv:p.warn.level||"",note:p.warn.note||"",src:"自动",id:"",fixN:(p.fix||[]).length})});
   ACWARN.forEach(r=>rows.push({sid:r["学号"],name:r["姓名"]||nameOfSid(r["学号"]),cls:(S.find(x=>x["学号"]===r["学号"])||{})["班级"]||"",year:"",earned:"",fn:"",mn:"",type:r["警示类型"]||"学业警示",lv:"",note:(r["级别"]?"["+r["级别"]+"] ":"")+(r["原因"]||"")+(r["学期"]?"（"+r["学期"]+"）":""),src:"手动",id:r["记录ID"]}));
+  /* 学位证警示：GPA 低于 2.5（已有学业类警示的同学不重复出条，表格里另有「学位证警示」列） */
+  const hasAcWarn=new Set(Object.keys(ASTU).filter(sid=>ASTU[sid].warn&&ASTU[sid].warn.type));
+  S.forEach(s=>{const g=parseFloat(s["GPA"]);const sid=String(s["学号"]||"");if(!sid||isNaN(g)||g>=2.5||hasAcWarn.has(sid))return;
+    rows.push({sid:sid,name:s["姓名"]||"",cls:s["班级"]||"",year:"",earned:"",valid:"",fn:"",mn:"",ue:"",type:"学位证警示",
+      lv:(g<2.0?"危险：":"警示：")+"GPA "+g,note:"低于 2.5（学位证授予要求）；建议优先跟进课程重修与绩点提升",src:"自动",id:"",fixN:0})});
   return rows;
 }
 function acRows(){
@@ -1991,7 +1999,7 @@ function acRows(){
     .sort((a,b)=>(b.fn||0)-(a.fn||0)||String(a.sid).localeCompare(String(b.sid)));
 }
 function acTypeCounts(){
-  const c={"课程警示":0,"学业警示":0,"退学警示":0,"留级警示":0};
+  const c={"课程警示":0,"学业警示":0,"退学警示":0,"留级警示":0,"学位证警示":0};
   acAllRows().forEach(r=>{if(c[r.type]!==undefined)c[r.type]++});
   return c;
 }
@@ -2045,15 +2053,18 @@ function acWarnTable(){
   const pager=pgBar("ac-warn",all.length,"条",10);
   const pg=$("#ac-warn-pager");if(pg)pg.innerHTML=pager;
   $("#ac-warn-table").innerHTML=rows.length?
-    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>有效学分</th><th>未获学分科目</th><th>警示类型</th><th>说明</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
-    rows.map(r=>'<tr onclick="stuDetail(\''+r.sid+'\')" style="cursor:pointer">'+
+    '<table><tr><th>学号</th><th>姓名</th><th>班级</th><th>累计学分</th><th>有效学分</th><th>未获学分科目</th><th>警示类型</th><th>学位证警示</th><th>说明</th>'+(EDIT?'<th>操作</th>':'')+'</tr>'+
+    rows.map(r=>{const stu=S.find(s=>String(s["学号"])===String(r.sid))||{};const g=parseFloat(stu["GPA"]);
+      const deg=g?isNaN(g)?'—':g<2.0?'<span class="tag tr">危险 '+esc(stu["GPA"])+'</span>':g<2.5?'<span class="tag ty">警示 '+esc(stu["GPA"])+'</span>':'<span class="tag tg">正常</span>':'—';
+      return '<tr onclick="stuDetail(\''+r.sid+'\')" style="cursor:pointer">'+
       '<td>'+esc(r.sid)+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.cls)+'</td><td>'+(r.earned!==""&&r.earned!==undefined?r.earned:"—")+'</td><td>'+(r.valid!=null&&r.valid!==""?r.valid:"—")+'</td>'+
       '<td>'+(r.ue!==""&&r.ue!==undefined?(r.ue>0?'<span class="tag tr">'+r.ue+' 项</span>':'<span class="tag tg">0</span>'):"—")+'</td>'+
-      '<td>'+(r.type==="退学警示"?'<span class="tag tr" style="background:#f7c1c1;color:#791f1f">'+esc(r.type)+'</span>':r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="课程警示"?'<span class="tag tb">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
+      '<td>'+(r.type==="退学警示"?'<span class="tag tr" style="background:#f7c1c1;color:#791f1f">'+esc(r.type)+'</span>':r.type==="留级警示"?'<span class="tag tr">'+esc(r.type)+'</span>':r.type==="课程警示"?'<span class="tag tb">'+esc(r.type)+'</span>':r.type==="学位证警示"?'<span class="tag tpu">'+esc(r.type)+'</span>':r.type==="手动登记"?'':'<span class="tag ty">'+esc(r.type)+'</span>')+(r.src==="手动"?' <span class="tag tgr">手动</span>':'')+'</td>'+
+      '<td>'+deg+'</td>'+
       '<td class="small" style="white-space:normal;max-width:330px">'+(r.lv?'<b>'+esc(r.lv)+'</b><br>':'')+esc(r.note||"—")+(r.fixN?' <span class="tag tg" title="已登记补考/重修结果">已跟进 '+r.fixN+'</span>':'')+'</td>'+
       (EDIT?'<td>'+(r.src==="自动"&&ASTU[r.sid]?'<button class="btn" onclick="event.stopPropagation();acFollowModal(\''+r.sid+'\')">成绩跟进</button>':'')+
         (r.id?' <button class="btn" onclick="event.stopPropagation();acWarnModal(\''+r.sid+'\',\''+r.id+'\')">编辑</button> <button class="btn danger" onclick="event.stopPropagation();acWarnDel(\''+r.id+'\',\''+esc(r.name)+'\')">删除</button>':'')+'</td>':'')+
-    '</tr>').join("")+'</table>'
+    '</tr>';}).join("")+'</table>'
     :'<div class="empty">'+(anaHasData()?"当前筛选条件下没有警示记录":"尚未导入成绩：编辑模式下点「导入成绩」上传「全校成绩查询」文件")+'</div>';
 }
 function anaHasData(){return Object.keys(ASTU).length>0}
@@ -2281,7 +2292,7 @@ function acWarnModal(sid,id){
   if(!needEdit())return;
   const rec=id?ACWARN.find(r=>r["记录ID"]===id):null;
   const stu=sid?S.find(x=>x["学号"]===sid):null;
-  const types=["退学警示","留级警示","学业警示","课程警示","学分预警","其他"];
+  const types=["退学警示","留级警示","学业警示","课程警示","学位证警示","学分预警","其他"];
   $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>'+(rec?"编辑学业警示":"新增学业警示")+'</h3>'+
     '<div class="small" style="margin:-2px 0 12px">人工登记的警示与自动分析结果合并展示（来源标为「手动」）。</div>'+
     '<div class="kv-form">'+
