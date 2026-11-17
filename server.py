@@ -3,7 +3,7 @@
 - 仅监听 127.0.0.1，不联外网，不上传任何数据；
 - 看板中点「保存更改」→ POST /api/save → 写回 data/*.csv → 自动重建看板与脱敏版。
 只读写 辅导员工作台_输出/ 目录，不碰任何原始文件。"""
-import base64, csv, datetime, io, json, os, re, subprocess, sys, urllib.parse
+import base64, csv, datetime, io, json, os, random, re, subprocess, sys, urllib.parse
 from http.server import ThreadingHTTPServer, HTTPServer, SimpleHTTPRequestHandler
 
 from app_paths import APP_HOME as HERE
@@ -985,6 +985,229 @@ def academic_follow(obj):
                 "warn": (stu.get("warn") or {}).get("type") or ""}}
 
 
+# ---------------------------------------------------------------- 谈心谈话
+# 一轮谈话 = 按开始日期起，每天从各班「没谈过」的学生里随机抽 1 人提醒跟进；
+# 当天没谈的任务自动顺延到之后每天继续出现；谈过的本轮内不再出现。
+TALKPLAN_FILE = "15_谈心谈话.json"
+
+
+def _tp_load():
+    p = os.path.join(DATA, TALKPLAN_FILE)
+    if os.path.exists(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict) and isinstance(d.get("rounds"), list):
+                d.setdefault("nextId", 1)
+                return d
+        except Exception:
+            pass
+    return {"nextId": 1, "rounds": []}
+
+
+def _tp_save(d):
+    with open(os.path.join(DATA, TALKPLAN_FILE), "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+
+
+def _tp_students():
+    """全班学生（学号/姓名/班级），按班级分组；学生主表是唯一来源。"""
+    p = os.path.join(DATA, TABLES["students"])
+    out = {}
+    if not os.path.exists(p):
+        return out
+    with open(p, encoding="utf-8-sig", newline="") as f:
+        rd = csv.DictReader(f)
+        for r in rd:
+            sid = (r.get("学号") or "").strip()
+            if not sid:
+                continue
+            cls = (r.get("班级") or "").strip() or "未分班"
+            out.setdefault(cls, []).append({"sid": sid, "name": (r.get("姓名") or "").strip(), "cls": cls})
+    return out
+
+
+def _tp_name_map():
+    m = {}
+    for lst in _tp_students().values():
+        for s in lst:
+            m[s["sid"]] = s["name"]
+    return m
+
+
+def _tp_find(d, rid):
+    for r in d["rounds"]:
+        if str(r.get("id")) == str(rid):
+            return r
+    raise ValueError("找不到该轮次")
+
+
+def _tp_open_sids(rd):
+    """待谈任务里的学生（含顺延中的）：这些人已在任务列表，不再重复抽。"""
+    s = set()
+    for day in (rd.get("days") or {}).values():
+        for it in day.get("items", []):
+            if it.get("status") in ("pending", "postponed"):
+                s.add(it.get("sid"))
+    return s
+
+
+def _tp_gen_day(rd, date):
+    """date 当天的抽取还没生成过 → 每班随机抽 1 人并持久化（同一天结果不变）。"""
+    if rd.get("status") != "active" or date < rd.get("startDate", ""):
+        return
+    days = rd.setdefault("days", {})
+    if date in days:
+        return
+    done = {x["sid"] for x in rd.get("done", [])}
+    open_sids = _tp_open_sids(rd)
+    nm = _tp_name_map()
+    items = []
+    for cls, pool in (rd.get("pool") or {}).items():
+        avail = [s for s in pool if s not in done and s not in open_sids]
+        if not avail:
+            continue
+        sid = random.choice(avail)
+        items.append({"sid": sid, "name": nm.get(sid, ""), "cls": cls,
+                      "src": "auto", "status": "pending", "at": ""})
+    if items:
+        days[date] = {"items": items}
+
+
+def _tp_view(rd, date):
+    """待谈视图：当天任务 + 之前没谈完顺延下来的任务，按班级排。"""
+    _tp_gen_day(rd, date)
+    out = []
+    for d in sorted((rd.get("days") or {}).keys()):
+        if d > date:
+            continue
+        for it in rd["days"][d].get("items", []):
+            if it.get("status") in ("pending", "postponed"):
+                v = dict(it)
+                v["date"] = d
+                try:
+                    v["lag"] = (datetime.date.fromisoformat(date) - datetime.date.fromisoformat(d)).days
+                except Exception:
+                    v["lag"] = 0
+                out.append(v)
+    out.sort(key=lambda x: (x.get("cls", ""), x.get("date", "")))
+    return out
+
+
+def _tp_item(rd, date, sid):
+    for it in (rd.get("days") or {}).get(date, {}).get("items", []):
+        if it.get("sid") == sid and it.get("status") not in ("done", "swapped"):
+            return it
+    raise ValueError("在 %s 的任务里没找到这位同学（可能已谈过或已更换）" % date)
+
+
+def talkplan_get():
+    d = _tp_load()
+    today = datetime.date.today().isoformat()
+    changed = False
+    for rd in d["rounds"]:
+        if rd.get("status") == "active":
+            _tp_gen_day(rd, today)
+            changed = True
+    if changed:
+        _tp_save(d)
+    view = {str(rd["id"]): _tp_view(rd, today) for rd in d["rounds"] if rd.get("status") == "active"}
+    return {"ok": True, "today": today, "data": d, "view": view}
+
+
+def talkplan_post(obj):
+    act = str(obj.get("action") or "").strip()
+    d = _tp_load()
+    today = datetime.date.today().isoformat()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    nm = _tp_name_map()
+    if act == "start":
+        if any(r.get("status") == "active" for r in d["rounds"]):
+            raise ValueError("已有一轮谈话在进行中，请先结束它再开始新一轮")
+        no = int(obj.get("no") or (max([r.get("no", 0) for r in d["rounds"]] or [0]) + 1))
+        start = str(obj.get("startDate") or today).strip() or today
+        stu = _tp_students()
+        rd = {"id": int(d.get("nextId", 1)), "no": no, "startDate": start,
+              "status": "active", "finishedAt": "", "done": [], "days": {},
+              "pool": {cls: [s["sid"] for s in lst] for cls, lst in stu.items()}}
+        d["nextId"] = rd["id"] + 1
+        d["rounds"].append(rd)
+        _tp_gen_day(rd, max(start, today))
+        _tp_save(d)
+        return {"ok": True, "roundId": rd["id"]}
+    rd = _tp_find(d, obj.get("roundId"))
+    if act == "done":
+        sid = str(obj.get("sid") or "").strip()
+        date = str(obj.get("date") or today)
+        it = _tp_item(rd, date, sid)
+        it["status"] = "done"
+        it["at"] = now
+        rd.setdefault("done", []).append({"sid": sid, "name": it.get("name") or nm.get(sid, ""),
+                                          "date": date, "at": now, "src": it.get("src", "")})
+        _tp_save(d)
+        return {"ok": True}
+    if act == "swap":
+        sid = str(obj.get("sid") or "").strip()
+        date = str(obj.get("date") or today)
+        it = _tp_item(rd, date, sid)
+        cls = it.get("cls", "")
+        done = {x["sid"] for x in rd.get("done", [])}
+        open_sids = _tp_open_sids(rd)
+        new_sid = str(obj.get("newSid") or "").strip()
+        if not new_sid:
+            avail = [s for s in rd.get("pool", {}).get(cls, []) if s not in done and s not in open_sids and s != sid]
+            if not avail:
+                raise ValueError("「%s」班里已经没有可换的学生了" % cls)
+            new_sid = random.choice(avail)
+        if new_sid == sid:
+            raise ValueError("换的还是同一位同学")
+        if new_sid in done or new_sid in open_sids:
+            raise ValueError("该同学已在待谈或已谈名单中")
+        it["status"] = "swapped"
+        it["swappedTo"] = new_sid
+        rd.setdefault("days", {}).setdefault(date, {"items": []})["items"].append(
+            {"sid": new_sid, "name": nm.get(new_sid, ""), "cls": cls,
+             "src": "swap", "status": "pending", "at": ""})
+        _tp_save(d)
+        return {"ok": True, "newSid": new_sid}
+    if act == "add":
+        sid = str(obj.get("sid") or "").strip()
+        date = str(obj.get("date") or today)
+        if not sid:
+            raise ValueError("请选择要新增谈话的同学")
+        done = {x["sid"] for x in rd.get("done", [])}
+        open_sids = _tp_open_sids(rd)
+        if sid in done:
+            raise ValueError("这位同学本轮已谈过")
+        if sid in open_sids:
+            raise ValueError("这位同学已经在待谈名单里了")
+        cls = ""
+        for c, lst in _tp_students().items():
+            if any(s["sid"] == sid for s in lst):
+                cls = c
+                break
+        rd.setdefault("days", {}).setdefault(date, {"items": []})["items"].append(
+            {"sid": sid, "name": nm.get(sid, ""), "cls": cls,
+             "src": "extra", "status": "pending", "at": ""})
+        _tp_save(d)
+        return {"ok": True}
+    if act == "postpone":
+        it = _tp_item(rd, str(obj.get("date") or today), str(obj.get("sid") or "").strip())
+        it["status"] = "postponed"
+        _tp_save(d)
+        return {"ok": True}
+    if act == "finish":
+        rd["status"] = "finished"
+        rd["finishedAt"] = now
+        _tp_save(d)
+        return {"ok": True}
+    if act == "delete":
+        d["rounds"].remove(rd)
+        _tp_save(d)
+        return {"ok": True}
+    raise ValueError("未知操作: %s" % act)
+
+
 def _current_analysis():
     if not os.path.exists(academic.ANALYSIS_FILE):
         return None
@@ -1105,6 +1328,12 @@ class Handler(SimpleHTTPRequestHandler):
                     if not os.path.exists(os.path.join(PHOTOS, sid + ".jpg")):
                         missing.append(sid)
             self._json({"missing": missing})
+            return
+        if path == "/api/talkplan":
+            try:
+                self._json(talkplan_get())
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
             return
         if path.startswith("/photo/"):
             sid = path[len("/photo/"):]
@@ -1289,6 +1518,14 @@ class Handler(SimpleHTTPRequestHandler):
                 ln = int(self.headers.get("Content-Length", 0))
                 obj = json.loads(self.rfile.read(ln).decode("utf-8"))
                 self._json(academic_follow(obj))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[-300:]}, 500)
+            return
+        if self.path == "/api/talkplan":
+            try:
+                ln = int(self.headers.get("Content-Length", 0))
+                obj = json.loads(self.rfile.read(ln).decode("utf-8"))
+                self._json(talkplan_post(obj))
             except Exception as e:
                 self._json({"ok": False, "error": str(e)[-300:]}, 500)
             return

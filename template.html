@@ -433,6 +433,22 @@ nav .tab.active + .subnav{display:flex}
 .member:hover{border-color:#c9d2e0;background:#f8fafd}
 .member img,.member .mi{width:24px;height:24px;border-radius:7px;object-fit:cover;background:var(--gray-bg);display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--sub);flex:0 0 auto}
 .member .wz{background:var(--yellow-bg);color:var(--yellow);font-size:10px;padding:0 5px;border-radius:5px;font-weight:700}
+/* 谈心谈话 */
+.tp-cls{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px}
+.tp-h{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.tp-h .n{color:var(--sub);font-weight:400;font-size:12px}
+.tp-item{display:flex;align-items:center;gap:6px;padding:7px 8px;border-top:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+.tp-cls .tp-item:first-of-type{border-top:none}
+.tp-name{font-weight:700;cursor:pointer}
+.tp-name:hover{color:var(--blue)}
+.tp-acts{margin-left:auto;display:inline-flex;gap:10px}
+.tp-acts a{font-size:12px}
+.tp-acts a:first-child{color:var(--green)}
+.tp-acts a:last-child{color:var(--blue)}
+.tp-day{padding:8px 0;border-bottom:1px dashed var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.tp-day b{color:var(--sub);font-weight:600}
+.tp-hist{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:2px 4px;border-radius:6px}
+.tp-hist:hover{background:#f5f8fd}
 /* 按去向的胶囊图：两栏（窄屏回落单栏） */
 .pill-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
 .pill-2 .room-card{margin-bottom:0}
@@ -497,6 +513,10 @@ nav .tab.active + .subnav{display:flex}
       <div class="tab" data-p="grad" data-gnav="waizhu" title="外住">
         <svg viewBox="0 0 24 24"><path d="m3.4 10.4 8.6-6.8 8.6 6.8V19a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2v-8.6Z"/><path d="M9.6 21v-6.2h4.8V21"/></svg>
         <span>外住</span><span class="badge" id="bn-wz">—</span>
+      </div>
+      <div class="tab" data-p="grad" data-gnav="talk" title="谈心谈话" style="display:none">
+        <svg viewBox="0 0 24 24"><path d="M21 11.6a8.4 8.4 0 0 1-8.6 8.2c-1.3 0-2.5-.3-3.6-.8L3.2 20l1.1-4.2A8.2 8.2 0 1 1 21 11.6Z"/><path d="M8.4 10.4h.01M12.4 10.4h.01M16.4 10.4h.01"/></svg>
+        <span>谈心谈话</span><span class="badge" id="bn-talk">—</span>
       </div>
       <div class="tab" data-p="grad" data-gnav="study" title="学业">
         <svg viewBox="0 0 24 24"><path d="M12 6.4S9.6 4.4 4 4.4v13.2c5.6 0 8 2 8 2s2.4-2 8-2V4.4c-5.6 0-8 2-8 2Z"/><path d="M12 6.4v13.2"/></svg>
@@ -612,6 +632,12 @@ nav .tab.active + .subnav{display:flex}
         <div class="gview" id="gv-waizhu" style="display:none">
           <h2 class="sec">外住看板</h2>
           <div class="panel" id="grad-waizhu"></div>
+        </div>
+
+        <!-- 谈心谈话 -->
+        <div class="gview" id="gv-talk" style="display:none">
+          <h2 class="sec">谈心谈话</h2>
+          <div id="talk-root"></div>
         </div>
 
         <!-- 学业 -->
@@ -1034,6 +1060,8 @@ function drawStuList(){
 }
 PG_DRAW["stulist"]=()=>drawStuList();
 const S=DATA.students, T=DATA.todos, TK=DATA.talks||[];
+/* 谈心谈话计划（异步从 /api/talkplan 载入；detectIssues 里会引用，声明必须在前面） */
+let TP=null, TP_CUR=null;
 TK.forEach((r,i)=>r._i=i);
 /** 某学生的谈话记录（按时间倒序：新的在前） */
 const talkOf=sid=>TK.filter(r=>r["学号"]===sid).sort((a,b)=>String(b["谈话时间"]||"").localeCompare(String(a["谈话时间"]||"")));
@@ -1304,6 +1332,16 @@ function detectIssues(){
   const talkSid=new Set((DATA.talks||[]).map(t=>String(t["学号"]||"").trim()).filter(Boolean));
   const noTalk=stuRisk.filter(x=>!talkSid.has(String(x["学号"]||"").trim()));
   if(noTalk.length)add("毕业班",noTalk.length+" 人","风险学生本学期尚无谈话记录，需补录","中",["谈话"],noTalk);
+  /* 8.5) 谈心谈话：今天（含顺延）还没谈的同学 */
+  if(TP&&TP.ok){
+    for(const rid of Object.keys(TP.view||{})){
+      const tpItems=TP.view[rid]||[];
+      if(tpItems.length){
+        const tpSet=new Set(tpItems.map(x=>x.sid));
+        add("谈心谈话",tpItems.length+" 人","今天有谈心谈话任务待跟进（含此前顺延的），谈完请在「谈心谈话」页标记","中",["谈话","今日"],S.filter(x=>tpSet.has(x["学号"])));
+      }
+    }
+  }
   /* 9) 证件照缺失：已导入过照片（存在缩略图）但仍有学生没有，提示补齐 */
   if(anyPhoto()){
     const noPhoto=S.filter(x=>!hasPhotoOf(x["学号"]));
@@ -1623,7 +1661,181 @@ $$("#p-grad .seg").forEach(b=>b.onclick=()=>{
   if(gview==="photo"&&EDIT){const m=S.filter(x=>PHOTO[x["学号"]]&&!THUMBS.has(x["学号"])).length;if(m)genThumbs()}
 });
 /* ---------- 毕业班左侧导航 ---------- */
-const GNAV={all:"gv-all",class:"gv-board",committee:"gv-committee",dest:"gv-board",room:"gv-board",waizhu:"gv-waizhu",study:"gv-study"};
+/* ---------- 谈心谈话 ---------- */
+/* 一轮谈话：每天从各班随机抽 1 人提醒跟进；当天没谈自动顺延；谈过的本轮不再出现。 */
+const tpRd=()=>TP&&TP.data.rounds.find(r=>String(r.id)===String(TP_CUR));
+async function talkLoad(){
+  if(!EDIT)return;
+  try{
+    const r=await fetch("/api/talkplan",{cache:"no-store"});
+    TP=await r.json();
+    if(!TP.ok)TP=null;
+  }catch(e){TP=null}
+  /* 导航角标：今日待谈人数 */
+  const n=TP?Object.values(TP.view||{}).reduce((a,l)=>a+l.length,0):0;
+  const b=$("#bn-talk");
+  if(b){b.textContent=n?String(n):"—";b.style.display=(EDIT&&n)?"":"none"}
+  if($("#gv-talk").style.display==="block")renderTalk();
+}
+async function talkAct(p){
+  const r=await fetch("/api/talkplan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  const j=await r.json();
+  if(!j.ok)throw new Error(j.error||"操作失败");
+  await talkLoad();
+}
+const tpStu=sid=>S.find(x=>x["学号"]===sid)||{};
+function renderTalk(){
+  const root=$("#talk-root");if(!root)return;
+  if(!EDIT){root.innerHTML='<div class="panel"><div class="empty">谈心谈话需要在编辑模式下使用</div></div>';return}
+  if(!TP){root.innerHTML='<div class="panel"><div class="empty">正在载入谈话计划…</div></div>';return}
+  const rounds=TP.data.rounds;
+  if(!rounds.length){
+    root.innerHTML='<div class="panel" style="text-align:center;padding:36px 20px">'+
+      '<p style="margin-bottom:6px">按轮次开展谈心谈话：</p>'+
+      '<p class="small" style="margin-bottom:14px">开始一轮后，<b>每天从各班随机抽 1 名同学</b>提醒你跟进；当天没谈会自动顺延到后一天；谈过的同学本轮内不再出现。可以随时更换某位同学，也可以手动新增谈话对象。</p>'+
+      '<button class="btn primary" onclick="talkStartModal()">开始第 1 轮</button></div>';
+    return;
+  }
+  if(!TP_CUR||!tpRd())TP_CUR=String((rounds.find(r=>r.status==="active")||rounds[rounds.length-1]).id);
+  const rd=tpRd();
+  const total=Object.values(rd.pool||{}).reduce((a,b)=>a+b.length,0);
+  const doneN=rd.done.length;
+  const items=(TP.view||{})[String(rd.id)]||[];
+  const segs=rounds.map(r=>'<button class="seg'+(String(r.id)===String(TP_CUR)?" active":"")+'" onclick="TP_CUR=\''+r.id+'\';renderTalk()">第'+r.no+'轮</button>').join("");
+  const pct=total?Math.round(doneN/total*100):0;
+  const bar='<div class="filters" style="align-items:center;flex-wrap:wrap;margin-top:12px">'+
+    '<div class="seg-group">'+segs+'</div>'+
+    '<span style="margin-left:8px">'+(rd.status==="active"?'<span class="tag ty">进行中 · 自 '+esc(rd.startDate)+' 起</span>':'<span class="tag tg">已结束 · '+esc(rd.finishedAt||"")+'</span>')+'</span>'+
+    '<span style="margin-left:auto;display:flex;gap:8px">'+
+    (rd.status==="active"?'<button class="btn" onclick="talkAddModal()">新增谈话对象</button><button class="btn" onclick="talkFinish()">结束本轮</button>':'')+
+    '<button class="btn danger" onclick="talkDelete()">删除本轮</button></span></div>';
+  /* 今日待谈：按班级分组 */
+  const byCls={};
+  items.forEach(x=>{(byCls[x.cls]=byCls[x.cls]||[]).push(x)});
+  const dayCard='<div class="panel" style="margin-top:12px"><b>'+(rd.status==="active"?"今日待谈（"+esc(TP.today)+"）":"待谈任务")+'</b><span class="small">　没谈的第二天会继续出现，点「已谈」后本轮不再抽他</span>'+
+    (items.length?'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin-top:10px">'+
+      Object.keys(byCls).sort().map(cls=>'<div class="tp-cls"><div class="tp-h">'+esc(cls)+' <span class="n">'+byCls[cls].length+' 人</span></div>'+
+        byCls[cls].map(tpItemHtml).join("")+'</div>').join("")+'</div>'
+      :'<div class="empty" style="margin-top:8px">'+(rd.status==="active"?"今天没有待谈任务，全部班级都已抽完或已谈完":"本轮已结束")+'</div>')+'</div>';
+  /* 历史任务 */
+  const days=Object.keys(rd.days||{}).sort().reverse();
+  const hist='<div class="panel" style="margin-top:12px"><b>历史任务</b><span class="small">　点姓名查看学生详情</span>'+
+    (days.length?days.map(d=>'<div class="tp-day"><b>'+d+'</b>'+rd.days[d].items.map(it=>{
+      const st=it.status==="done"?'<span class="tag tg">已谈</span>':
+               it.status==="swapped"?'<span class="tag tgr">已更换 → '+esc(tpStu(it.swappedTo)["姓名"]||it.swappedTo||"")+'</span>':
+               '<span class="tag ty">顺延中</span>';
+      return '<span class="tp-hist" onclick="stuDetail(\''+it.sid+'\')"><b>'+esc(it.name)+'</b>'+st+'</span>';
+    }).join("")+'</div>').join(""):'<div class="empty">还没有任务记录</div>')+'</div>';
+  root.innerHTML=bar+'<div class="cards" style="margin-top:12px"><div id="tp-kpi"></div></div>'+dayCard+hist;
+  kpi("#tp-kpi",[
+    {v:doneN,l:"本轮已谈",c:"g"},
+    {v:items.length,l:rd.status==="active"?"今日待谈（含顺延）":"待谈",c:items.length?"y":"b"},
+    {v:pct+"%",l:"进度（共 "+total+" 人）",c:"b"},
+  ]);
+}
+function tpItemHtml(x){
+  const src=x.src==="extra"?'<span class="tag tb">手动新增</span>':x.src==="swap"?'<span class="tag tb">更换进来</span>':'<span class="tag tgr">每日抽取</span>';
+  const lag=x.lag>0?'<span class="tag ty">顺延 '+x.lag+' 天</span>':'';
+  return '<div class="tp-item"><span class="tp-name" onclick="stuDetail(\''+x.sid+'\')">'+esc(x.name)+'</span>'+src+lag+
+    '<span class="tp-acts">'+
+    '<a href="javascript:void(0)" onclick="talkDoneModal(\''+x.sid+'\',\''+x.date+'\')">已谈</a>'+
+    '<a href="javascript:void(0)" onclick="talkSwapModal(\''+x.sid+'\',\''+x.date+'\')">更换</a></span></div>';
+}
+function talkStartModal(){
+  const nextNo=(TP.data.rounds.reduce((m,r)=>Math.max(m,r.no||0),0)+1);
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>开始新一轮谈心谈话</h3>'+
+    '<label class="fld"><span class="lb">轮次编号</span><input id="tp-no" type="number" min="1" value="'+nextNo+'" style="width:120px"></label>'+
+    '<label class="fld"><span class="lb">开始日期</span><input id="tp-start" type="date" value="'+TP.today+'"></label>'+
+    '<div class="small" style="margin-top:8px">从明天（含开始日期当天）起，每天自动从各班未谈过的学生中随机抽 1 人。</div>'+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkStartGo()">开始</button></div>';
+  $("#mmask").style.display="block";
+}
+async function talkStartGo(){
+  try{
+    await talkAct({action:"start",no:Math.max(1,+$("#tp-no").value||1),startDate:$("#tp-start").value});
+    TP_CUR=null;closeModal();showToast("新一轮谈心谈话已开始");
+  }catch(e){showToast(e.message||"操作失败",true)}
+}
+function talkDoneModal(sid,date){
+  const x=tpStu(sid);
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>谈话完成 · '+esc(x["姓名"]||sid)+'（'+esc(x["班级"]||"")+'）</h3>'+
+    '<label class="fld"><span class="lb">谈话方式</span><select id="tp-way">'+TALK_WAYS.map(w=>'<option>'+w+'</option>').join("")+'</select></label>'+
+    '<label class="fld"><span class="lb">谈话内容<em>可选</em></span><textarea id="tp-content" rows="3" placeholder="填写后会同时记入「谈话跟进表」"></textarea></label>'+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkDoneGo(\''+sid+'\',\''+date+'\')">确认已谈</button></div>';
+  $("#mmask").style.display="block";
+}
+async function talkDoneGo(sid,date){
+  const way=$("#tp-way").value, c=($("#tp-content").value||"").trim();
+  try{
+    if(c){
+      const d=new Date(),pad=n=>String(n).padStart(2,"0");
+      const when=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes());
+      await fetch("/api/talk",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,id:"",time:when,way:way,content:c})});
+    }
+    await talkAct({action:"done",roundId:TP_CUR,sid:sid,date:date});
+    closeModal();showToast("已记为谈过，本轮不会再抽到他");
+  }catch(e){showToast(e.message||"操作失败",true)}
+}
+function talkSwapModal(sid,date){
+  const rd=tpRd(),x=tpStu(sid),cls=x["班级"]||"";
+  const done=new Set(rd.done.map(d=>d.sid));
+  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
+  const cand=S.filter(s=>s["班级"]===cls&&s["学号"]!==sid&&!done.has(s["学号"])&&!open.has(s["学号"]));
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>更换谈话对象</h3>'+
+    '<p style="margin-bottom:10px">把 <b>'+esc(x["姓名"]||sid)+'</b>（'+esc(cls)+'）换成：</p>'+
+    (cand.length?'<label class="fld"><span class="lb">选择本班其他同学</span><select id="tp-new">'+cand.map(s=>'<option value="'+esc(s["学号"])+'">'+esc(s["姓名"])+'</option>').join("")+'</select></label>'+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button>'+
+    '<button class="btn" onclick="talkSwapGo(\''+sid+'\',\''+date+'\',\'\')">随机换一个</button>'+
+    '<button class="btn primary" onclick="talkSwapGo(\''+sid+'\',\''+date+'\',$(\'#tp-new\').value)">确认更换</button></div>'
+    :'<div class="empty">这个班里没有可换的同学了（其他同学都已谈过或在待谈名单里）</div>');
+  $("#mmask").style.display="block";
+}
+async function talkSwapGo(sid,date,newSid){
+  try{
+    const j=await talkAct({action:"swap",roundId:TP_CUR,sid:sid,date:date,newSid:newSid||""});
+    closeModal();showToast("已换成 "+(tpStu(j.newSid)["姓名"]||j.newSid));
+  }catch(e){showToast(e.message||"操作失败",true)}
+}
+function talkAddModal(){
+  const rd=tpRd();
+  const done=new Set(rd.done.map(d=>d.sid));
+  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
+  const classes=[...new Set(S.map(x=>x["班级"]).filter(Boolean))].sort();
+  const date='<label class="fld"><span class="lb">谈话日期<em>默认今天</em></span><input id="tp-add-date" type="date" value="'+TP.today+'"></label>';
+  $("#mbody").innerHTML='<span class="close" onclick="closeModal()">✕</span><h3>新增谈话对象</h3>'+
+    '<label class="fld"><span class="lb">班级</span><select id="tp-add-cls" onchange="tpAddFill()">'+classes.map(c=>'<option>'+esc(c)+'</option>').join("")+'</select></label>'+
+    '<label class="fld"><span class="lb">同学</span><select id="tp-add-sid"></select></label>'+date+
+    '<div class="acts"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="talkAddGo()">新增</button></div>';
+  tpAddFill();
+  $("#mmask").style.display="block";
+}
+function tpAddFill(){
+  const rd=tpRd();
+  const done=new Set(rd.done.map(d=>d.sid));
+  const open=new Set(((TP.view||{})[String(rd.id)]||[]).map(i=>i.sid));
+  const cls=$("#tp-add-cls").value;
+  const cand=S.filter(x=>x["班级"]===cls&&!done.has(x["学号"])&&!open.has(x["学号"]));
+  $("#tp-add-sid").innerHTML=cand.length?cand.map(s=>'<option value="'+esc(s["学号"])+'">'+esc(s["姓名"])+'</option>').join(""):'<option value="">（这个班都谈过了）</option>';
+}
+async function talkAddGo(){
+  const sid=$("#tp-add-sid").value;
+  if(!sid){showToast("这个班没有可选的同学",true);return}
+  try{
+    await talkAct({action:"add",roundId:TP_CUR,sid:sid,date:$("#tp-add-date").value||TP.today});
+    closeModal();showToast("已加入待谈名单");
+  }catch(e){showToast(e.message||"操作失败",true)}
+}
+async function talkFinish(){
+  if(!confirm("确定结束本轮谈话吗？结束后不再生成每日抽取。"))return;
+  try{await talkAct({action:"finish",roundId:TP_CUR});showToast("本轮已结束")}catch(e){showToast(e.message||"操作失败",true)}
+}
+async function talkDelete(){
+  const rd=tpRd();
+  if(!confirm("确定删除第 "+rd.no+" 轮吗？该轮的全部记录（含已谈名单）都会删除。"))return;
+  try{await talkAct({action:"delete",roundId:TP_CUR});TP_CUR=null;showToast("已删除")}catch(e){showToast(e.message||"操作失败",true)}
+}
+
+const GNAV={all:"gv-all",class:"gv-board",committee:"gv-committee",dest:"gv-board",room:"gv-board",waizhu:"gv-waizhu",talk:"gv-talk",study:"gv-study"};
 const GNAV_TITLE={class:"班级看板",dest:"去向看板",room:"寝室看板"};
 function setGradNav(nav){
   Object.keys(GNAV).forEach(k=>{const el=$("#"+GNAV[k]);if(el&&GNAV[k]!==GNAV[nav])el.style.display="none"});
@@ -1637,6 +1849,7 @@ function setGradNav(nav){
   else if(nav==="dest"){gcat="dest";gsel="考研"}
   else if(nav==="room"){gcat="room";gsex=(gsex==="unk"?"男":gsex);gsel=firstFloorOf(gsex)}
   else if(nav==="study"){renderAcademic()}
+  else if(nav==="talk"){renderTalk()}
   if(GNAV_TITLE[nav])$("#gv-board-title").textContent=GNAV_TITLE[nav];
   if(nav==="class"||nav==="dest"||nav==="room"){
     $$("#p-grad .seg").forEach(x=>{if(x.dataset.cat)x.classList.toggle("active",x.dataset.cat===gcat);if(x.dataset.view)x.classList.toggle("active",x.dataset.view===gview)});
@@ -1647,6 +1860,12 @@ function setGradNav(nav){
 if($("#bn-all"))$("#bn-all").textContent=S.length;
 if($("#bn-wz"))$("#bn-wz").textContent=S.filter(x=>String(x["外住_审批状态"]||"").trim()).length;
 if($("#bn-cm"))$("#bn-cm").textContent=S.filter(x=>String(x["职务"]||"").trim()).length;
+/* 谈心谈话：仅编辑模式（脱敏外发版不显示）；载入后更新导航角标并渲染 */
+if(EDIT){
+  const tpTab=document.querySelector('[data-gnav="talk"]');
+  if(tpTab)tpTab.style.display="";
+  talkLoad();
+}
 /* ---------- 班委看板 ---------- */
 let cmClassF="",cmPostF="";
 const cmPosts=x=>String(x["职务"]||"").split(/[、,，;；/+]/).map(s=>s.trim()).filter(Boolean);
